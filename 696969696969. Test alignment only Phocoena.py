@@ -31,6 +31,55 @@ def execute_command_via_ssh(client, command):
     error = stderr.read()
     return output.decode(), error.decode()
 
+# Function to create necessary directories on the server
+def create_directories_on_server(server, port, user, key_file, remote_directories):
+    client = create_ssh_client(server, port, user, key_file)
+    try:
+        for directory in remote_directories:
+            command = f'mkdir -p {directory}'
+            output, error = execute_command_via_ssh(client, command)
+            if error:
+                print(f"Error creating directory {directory}: {error}")
+            else:
+                print(f"Directory created or already exists: {directory}")
+    finally:
+        client.close()
+
+# Function to upload the specified file from local to server
+def upload_file(server, port, user, key_file, local_file_path, remote_file_path):
+    # Check if the local file exists before attempting to upload
+    absolute_local_path = os.path.abspath(local_file_path)
+    print(f"Checking if local file exists at: {absolute_local_path}")
+    if not os.path.exists(absolute_local_path):
+        print(f"Error: Local file does not exist: {absolute_local_path}")
+        return
+
+    # Create SSH client to connect to the server
+    client = create_ssh_client(server, port, user, key_file)
+    sftp = client.open_sftp()
+    try:
+        print(f"Uploading {absolute_local_path} to {remote_file_path}")
+        sftp.put(absolute_local_path, remote_file_path)
+        print(f"Upload completed: {absolute_local_path} to {remote_file_path}")
+
+        # List the server directory to verify if the file is present
+        remote_dir = os.path.dirname(remote_file_path)
+        try:
+            files = sftp.listdir(remote_dir)
+            if os.path.basename(remote_file_path) in files:
+                print(f"Verified: File exists on server: {remote_file_path}")
+            else:
+                print(f"Error: Uploaded file not found in directory: {remote_dir}")
+        except IOError as e:
+            print(f"Failed to list directory {remote_dir}: {str(e)}")
+
+    except Exception as e:
+        print(f"Failed to upload {absolute_local_path}: {str(e)}")
+    finally:
+        # Close the SFTP session and SSH client
+        sftp.close()
+        client.close()
+
 # Function to execute MUSCLE alignment on the specified CDS file on the server
 def execute_muscle_on_cds(server, port, user, key_file):
     input_file = "/home/mfreeman/USCServer/sequences/CDS/Phocoena/CDS_nucleotide/Phocoena_concatenated_sequences_nucleotide.fasta"
@@ -96,8 +145,19 @@ server = "203.101.229.234"
 port = 22
 user = "mfreeman"
 key_file = "C:/Users/freem/OneDrive/Documents/USC/Honours/API keys/mfreeman-private-key.txt"
+local_file_to_upload = "sequences/CDS/Phocoena/CDS_nucleotide/Phocoena_concatenated_sequences_nucleotide.fasta"
+remote_file_to_upload = "/home/mfreeman/USCServer/sequences/CDS/Phocoena/CDS_nucleotide/Phocoena_concatenated_sequences_nucleotide.fasta"
 remote_file = "/home/mfreeman/USCServer/sequences/CDS/Phocoena/CDS_nucleotide/Phocoena_concatenated_sequences_nucleotide.afa"
 local_file = "sequences/CDS/Phocoena/CDS_nucleotide/Phocoena_concatenated_sequences_nucleotide.afa"
+
+# Create necessary directories on the server
+remote_directories = [
+    "/home/mfreeman/USCServer/sequences/CDS/Phocoena/CDS_nucleotide"
+]
+create_directories_on_server(server, port, user, key_file, remote_directories)
+
+# Upload the CDS nucleotide file from local to server
+upload_file(server, port, user, key_file, local_file_to_upload, remote_file_to_upload)
 
 # Execute MUSCLE alignment on the specified CDS file on the server
 execute_muscle_on_cds(server, port, user, key_file)
