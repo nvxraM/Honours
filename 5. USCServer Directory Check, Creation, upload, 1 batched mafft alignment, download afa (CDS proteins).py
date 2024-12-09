@@ -22,7 +22,7 @@ def create_ssh_client(server, port, user, key_file):
 
 # Function to ensure necessary directories exist on the server
 def ensure_directories_on_server():
-    base_directory = "/home/mfreeman/USCServer/sequences/CDS/"
+    base_directory = "/home/mfreeman/USCServer/CDS/"
     key_path = r"C:\Users\freem\OneDrive\Documents\USC\Honours\API keys\mfreeman-private-key.txt"
     ssh_host = "203.101.229.234"
     username = "mfreeman"
@@ -31,7 +31,7 @@ def ensure_directories_on_server():
     ssh = create_ssh_client(ssh_host, 22, username, key_path)
 
     # Get the list of species directories from the local directory
-    local_base_directory = "Honours/sequences/CDS/All_Species_Proteins"
+    local_base_directory = "sequences/CDS"
     species_dirs = [name for name in os.listdir(local_base_directory) if os.path.isdir(os.path.join(local_base_directory, name))]
 
     # Check if the directories already exist on the server, and create if they don't
@@ -56,13 +56,13 @@ def execute_command_via_ssh(client, command):
     error = stderr.read()
     return output.decode(), error.decode()
 
-# Function to execute MAFFT alignment on CDS files on the server
-def execute_mafft_on_cds():
+# Function to execute MUSCLE alignment on CDS files on the server
+def execute_muscle_on_cds():
     server = "203.101.229.234"
     port = 22
     user = "mfreeman"
     key_file = "C:/Users/freem/OneDrive/Documents/USC/Honours/API keys/mfreeman-private-key.txt"
-    base_directory = "/home/mfreeman/USCServer/sequences/CDS/"
+    base_directory = "/home/mfreeman/USCServer/CDS/"
 
     # Create SSH client to connect to the server
     client = create_ssh_client(server, port, user, key_file)
@@ -75,8 +75,8 @@ def execute_mafft_on_cds():
             return
         files_list = [file for file in output.strip().split()]
 
-        # Function to run MAFFT alignment for a specific file with enhanced debugging
-        def run_mafft_alignment(file):
+        # Function to run MUSCLE alignment for a specific file with enhanced debugging
+        def run_muscle_alignment(file):
             output_path = file.replace(".fasta", ".afa").replace("CDS_nucleotide", "CDS_protein/aligned")
             # Check if the alignment already exists
             output, error = execute_command_via_ssh(client, f"test -f {output_path} && echo exists")
@@ -84,16 +84,16 @@ def execute_mafft_on_cds():
                 print(f"Skipping {file}, already aligned.")
                 return
 
-            # Run MAFFT alignment using Singularity container
-            command = f"singularity exec mafft.sif mafft --auto {file} > {output_path}"
-            print(f"Aligning {file} using MAFFT...")
+            # Run MUSCLE alignment using Singularity container
+            command = f"singularity exec /RDS/Q1233/singularity/muscle.sif muscle -in {file} -out {output_path}"
+            print(f"Aligning {file} using MUSCLE...")
             output, error = execute_command_via_ssh(client, command)
             if error:
                 print(f"Failed to align {file}: {error}")
 
-        # Run MAFFT alignment for each file
+        # Run MUSCLE alignment for each file
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-            futures = [executor.submit(run_mafft_alignment, file) for file in files_list]
+            futures = [executor.submit(run_muscle_alignment, file) for file in files_list]
             concurrent.futures.wait(futures)
 
     finally:
@@ -174,8 +174,8 @@ server = "203.101.229.234"
 port = 22
 user = "mfreeman"
 key_file = "C:/Users/freem/OneDrive/Documents/USC/Honours/API keys/mfreeman-private-key.txt"
-remote_dir = "/home/mfreeman/USCServer/sequences/CDS/"
-local_dir = "Honours/sequences/CDS/All_Species_Proteins"
+remote_dir = "/home/mfreeman/USCServer/CDS/"
+local_dir = "CDS"
 
 # Ensure required directories exist on the server
 ensure_directories_on_server()
@@ -186,8 +186,8 @@ client = create_ssh_client(server, port, user, key_file)
 # Upload CDS files from local to server
 upload_files(client, local_dir, remote_dir)
 
-# Execute MAFFT alignment on CDS files on the server
-execute_mafft_on_cds()
+# Execute MUSCLE alignment on CDS files on the server
+execute_muscle_on_cds()
 
 # Download CDS alignment files
 client = create_ssh_client(server, port, user, key_file)
