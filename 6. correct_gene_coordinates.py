@@ -3,7 +3,6 @@ from Bio import SeqIO
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
 
-
 def add_gaps_to_all_species(base_dir):
     """
     For each species directory within the specified base directory:
@@ -51,8 +50,8 @@ def add_gaps_to_all_species(base_dir):
             protein_path = os.path.join(aligned_protein_dir, filename)
 
             # Extract the gene name from the file name.
-            # Assumes filenames are structured as "GENENAME_something.afa"
-            gene_name = filename.split('_')[0]
+            # Assumes filenames are structured as "GENENAME.afa"
+            gene_name = os.path.splitext(filename)[0]
 
             # Path to the corresponding nucleotide gene file
             gene_path = os.path.join(base_dir, species, 'CDS_nucleotide', f"{gene_name}.fasta")
@@ -126,7 +125,6 @@ def add_gaps_to_all_species(base_dir):
             output_path = os.path.join(species_output_dir, f"{gene_name}.fasta")
             SeqIO.write(modified_gene_records, output_path, 'fasta')
             print(f"Gapped gene sequences for {gene_name} in species {species} saved to {output_path}")
-
 
 # Define the main directory containing species-specific subdirectories
 main_dir = r'sequences/CDS'
