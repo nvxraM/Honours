@@ -17,6 +17,8 @@ def process_genbank_files(base_directory):
         species_path = os.path.join(input_directory, species_folder)
         if os.path.isdir(species_path):
             genus_name = species_folder.split('_')[0]
+            if genus_name == "Phocoenoides":
+                genus_name = "Phocoena"
             genus_cds_path = os.path.join(output_directory, genus_name)
             gene_dir = os.path.join(genus_cds_path, 'CDS_nucleotide')
             protein_dir = os.path.join(genus_cds_path, 'CDS_protein')
