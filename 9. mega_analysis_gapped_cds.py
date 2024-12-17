@@ -104,7 +104,7 @@ def run_mega_analysis():
     ]
 
     # Base directory containing all genus folders
-    base_dir = r"sequences\CDS"
+    base_dir = r"sequences/CDS_Genus"
 
     # Create .grp files for each genus
     create_grp_files(base_dir)

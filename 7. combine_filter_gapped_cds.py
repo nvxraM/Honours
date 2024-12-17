@@ -151,7 +151,7 @@ def concatenate_gapped_sequences(base_dir, genus):
             output.write(f">{accession}\n{sequence}\n")
 
 # Base directory containing the genus subdirectories
-base_directory = "sequences/CDS"
+base_directory = "sequences/CDS_Genus"
 
 # Identify all directories in the base directory that represent genera
 genus_list = [

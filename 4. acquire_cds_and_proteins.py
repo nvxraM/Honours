@@ -11,13 +11,13 @@ def process_genbank_files(base_directory):
     This function does the following:
     - Iterates over a directory structure containing GenBank files.
     - Attempts to find corresponding FASTA files with matching IDs.
-    - Extracts CDS (coding sequence) information (both nucleotide and protein).
+    - Extracts CDS_Genus (coding sequence) information (both nucleotide and protein).
     - Logs progress and any issues encountered.
     - Adjusts sequences to remove stop codons and partial stop codons so that the sequences are fully divisible by 3.
     """
     format_type = 'gb'
     input_directory = os.path.join(base_directory, format_type)
-    output_directory = os.path.join(base_directory, "CDS")
+    output_directory = os.path.join(base_directory, "CDS_Genus")
     log_file_path = os.path.join(base_directory, "CDS_Acquisition_Log.txt")
 
     # Check if the input directory exists
@@ -62,7 +62,7 @@ def process_genbank_files(base_directory):
                     file_path = os.path.join(species_path, genbank_file)
                     with open(file_path, 'r') as gb_handle:
                         for record in SeqIO.parse(gb_handle, format_type):
-                            # Extract and save CDS sequences to files
+                            # Extract and save CDS_Genus sequences to files
                             extract_and_save(
                                 [record],
                                 gene_dir,
@@ -73,7 +73,7 @@ def process_genbank_files(base_directory):
                             )
 
             # Log that we processed this species
-            log_message(log_file_path, f"Processed CDS for species: {species_folder}")
+            log_message(log_file_path, f"Processed CDS_Genus for species: {species_folder}")
 
     # After processing all species, recheck all sequences for proper length
     recheck_sequence_lengths(output_directory, log_file_path)
@@ -108,20 +108,20 @@ def find_fasta_file(base_directory, species_folder):
 
 def extract_and_save(records, gene_directory, protein_directory, fasta_records, species_name, log_file_path):
     """
-    Extracts CDS nucleotide and protein sequences from a list of SeqRecords.
+    Extracts CDS_Genus nucleotide and protein sequences from a list of SeqRecords.
     Writes them into appropriate FASTA files grouped by gene.
     """
     gene_sequences = {}
     protein_sequences = {}
 
     for record in records:
-        # Identify CDS features (features of type "CDS" with a "translation" qualifier)
+        # Identify CDS_Genus features (features of type "CDS_Genus" with a "translation" qualifier)
         cds_features = [
             feature for feature in record.features
-            if feature.type == "CDS" and "translation" in feature.qualifiers
+            if feature.type == "CDS_Genus" and "translation" in feature.qualifiers
         ]
 
-        # Process each CDS feature
+        # Process each CDS_Genus feature
         for feature in cds_features:
             # Determine gene name from feature qualifiers
             if "gene" in feature.qualifiers:
@@ -159,7 +159,7 @@ def extract_and_save(records, gene_directory, protein_directory, fasta_records, 
                 seq_to_use = record.seq
                 sequence_source = 'GenBank record'
 
-            # Extract the nucleotide sequence for this CDS feature
+            # Extract the nucleotide sequence for this CDS_Genus feature
             nucleotide_sequence = str(feature.extract(seq_to_use))
             log_message(log_file_path,
                         f"Extracted sequence for accession {accession_id}, gene {gene_name} from {sequence_source}. Strand: {location.strand}")

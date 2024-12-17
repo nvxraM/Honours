@@ -127,7 +127,7 @@ def add_gaps_to_all_species(base_dir):
             print(f"Gapped gene sequences for {gene_name} in species {species} saved to {output_path}")
 
 # Define the main directory containing species-specific subdirectories
-main_dir = r'sequences/CDS'
+main_dir = r'sequences/CDS_Genus'
 
 # Run the function to process all species
 add_gaps_to_all_species(main_dir)

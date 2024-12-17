@@ -29,18 +29,18 @@ def count_fasta_headers(fasta_file):
 
 def check_cds_count(gb_file_path):
     """
-    Count the number of CDS features in a given GenBank file.
+    Count the number of CDS_Genus features in a given GenBank file.
 
     Parameters:
         gb_file_path (str): Path to the GenBank file.
 
     Returns:
-        int: The number of CDS entries found in the GenBank file.
+        int: The number of CDS_Genus entries found in the GenBank file.
     """
     with open(gb_file_path, 'r') as file:
         content = file.read()
-        # Matches lines indicating a CDS entry. CDS often start with a line containing "CDS" preceded by whitespace.
-        cds_count = len(re.findall(r'\n\s+CDS\s', content))
+        # Matches lines indicating a CDS_Genus entry. CDS_Genus often start with a line containing "CDS_Genus" preceded by whitespace.
+        cds_count = len(re.findall(r'\n\s+CDS_Genus\s', content))
         return cds_count
 
 
@@ -89,8 +89,8 @@ def exclude_species_based_on_fasta(fasta_directory, gb_directory, header_thresho
 def check_and_move_species_based_on_cds(fasta_directory, gb_directory):
     """
     For each species in the GB directory:
-    - Checks each GenBank file for the number of CDS features.
-    - If a file does not have the expected number of CDS features (e.g., 13), the file is moved to the excluded directory.
+    - Checks each GenBank file for the number of CDS_Genus features.
+    - If a file does not have the expected number of CDS_Genus features (e.g., 13), the file is moved to the excluded directory.
     - The corresponding entries in the FASTA file are also moved to the excluded directory.
     - The original FASTA file is updated to remove the excluded sequences.
 
@@ -108,14 +108,14 @@ def check_and_move_species_based_on_cds(fasta_directory, gb_directory):
                 # Keep track of accessions to exclude
                 excluded_accessions = []
 
-                # Check each GB file for the correct number of CDS features
+                # Check each GB file for the correct number of CDS_Genus features
                 for gb_file in gb_files:
                     gb_file_path = os.path.join(species_gb_path, gb_file)
                     accession = gb_file.split('.')[0]
 
                     if os.path.isfile(gb_file_path):
                         cds_count = check_cds_count(gb_file_path)
-                        # If the number of CDS entries is not as expected (13 in this example),
+                        # If the number of CDS_Genus entries is not as expected (13 in this example),
                         # move the file and track the accession.
                         if cds_count != 13:
                             excluded_gb_path = os.path.join(excluded_gb_dir, species)
@@ -123,7 +123,7 @@ def check_and_move_species_based_on_cds(fasta_directory, gb_directory):
 
                             # Move the GB file to the excluded directory
                             shutil.move(gb_file_path, os.path.join(excluded_gb_path, gb_file))
-                            print(f"Moved {gb_file} to excluded/gb due to {cds_count} CDS entries.")
+                            print(f"Moved {gb_file} to excluded/gb due to {cds_count} CDS_Genus entries.")
                             excluded_accessions.append(accession)
 
                 # If we excluded any GB files, we must also update the corresponding FASTA files

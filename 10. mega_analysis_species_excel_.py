@@ -5,7 +5,7 @@ from Bio import SeqIO
 from Bio.SeqUtils import gc_fraction
 
 # Root directory containing sequences
-root_dir = 'sequences/CDS'
+root_dir = 'sequences/CDS_Genus'
 
 # Regex pattern to parse lines.
 # This pattern:
@@ -56,7 +56,7 @@ for genus in os.listdir(root_dir):
 
 # Compute the average GC content and sequence count per species
 # We have a single concatenated FASTA for each genus:
-# sequences/CDS/<Genus>/CDS_nucleotide_gapped/<Genus>_concatenated_gapped_sequences.fasta
+# sequences/CDS_Genus/<Genus>/CDS_nucleotide_gapped/<Genus>_concatenated_gapped_sequences.fasta
 avg_gc_per_species = {}
 sequence_count_per_species = {}
 

@@ -272,9 +272,9 @@ if __name__ == "__main__":
     user = "mfreeman"
     key_file = "C:/Users/freem/OneDrive/Documents/USC/Honours/API keys/mfreeman-private-key.txt"
 
-    remote_dir = "/home/mfreeman/USCServer/CDS/"
-    local_base_directory = "sequences/CDS"  # Local base directory containing species subdirs
-    local_dir = "sequences/CDS"             # Same as above, can be used interchangeably if needed
+    remote_dir = "/home/mfreeman/USCServer/CDS_Genus/"
+    local_base_directory = "sequences/CDS_Genus"  # Local base directory containing species subdirs
+    local_dir = "sequences/CDS_Genus"  # Same as above, can be used interchangeably if needed
 
     # 1. Create an SSH client connection
     client = create_ssh_client(server, port, user, key_file)
