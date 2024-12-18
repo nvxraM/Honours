@@ -28,14 +28,14 @@ matplotlib.use('TkAgg')
 class InteractiveGroupEditor:
     """
     A GUI application to interactively edit group assignments of MDS data points.
-    If no CSV files exist, tries to create them from MDS files.
-    After editing, copies all files (CSV, PNG, MDS) to:
-    sequences/Interactive_group_editor/[Genus]/[Species]/.mds
+    If no CSV files exist, tries to create them from MDS files and directly places them in:
+    sequences/Interactive_group_editor/[Genus]/[Species].
+    After editing, copies all files (CSV, PNG, MDS, FASTA) to:
+    sequences/Interactive_group_editor/[Genus]/[Species].
     """
 
     def __init__(self, base_directory):
         self.base_directory = base_directory
-        # Attempt to get CSV files; if none exist, create them from MDS files
         self.csv_files = self._get_or_create_csv_files()
 
         self.csv_file = self.csv_files[0][1][0] if self.csv_files else None
@@ -50,6 +50,9 @@ class InteractiveGroupEditor:
             raise ValueError(f"Error reading the CSV file: {e}")
 
         self.df_original = copy.deepcopy(self.df)
+
+        # Parse genus and species from current CSV file path
+        self.genus, self.species_name = self._parse_genus_species_from_path(self.csv_file)
 
         # Configure customtkinter appearance
         ctk.set_appearance_mode("System")
@@ -72,8 +75,117 @@ class InteractiveGroupEditor:
             7: '#42d4f4'
         }
 
-        # Species file map for updating dropdown menus
         self.species_file_map = {}
+
+        # Extended oceans and seas list
+        self.oceans = [
+            ("Arctic Ocean", "Arctic Ocean", (82.5, -45)),
+            ("Atlantic Ocean", "Atlantic Ocean", (0, -30)),
+            ("Indian Ocean", "Indian Ocean", (-20, 80)),
+            ("Southern Ocean", "Southern Ocean", (-65, 140)),
+            ("Pacific Ocean", "Pacific Ocean", (0, -140)),
+
+            # Atlantic Ocean Regions
+            ("Mediterranean Sea", "Atlantic Ocean", (35, 18)),
+            ("Caribbean Sea", "Atlantic Ocean", (15, -75)),
+            ("Gulf of Mexico", "Atlantic Ocean", (25, -90)),
+            ("Baltic Sea", "Atlantic Ocean", (58, 20)),
+            ("North Sea", "Atlantic Ocean", (56, 3)),
+            ("Norwegian Sea", "Atlantic Ocean", (68, 5)),
+            ("Sargasso Sea", "Atlantic Ocean", (30, -60)),
+            ("Labrador Sea", "Atlantic Ocean", (58, -55)),
+            ("Gulf of Guinea", "Atlantic Ocean", (0, 5)),
+            ("English Channel", "Atlantic Ocean", (50, -1)),
+            ("Bay of Biscay", "Atlantic Ocean", (45, -5)),
+            ("Irish Sea", "Atlantic Ocean", (54, -5)),
+            ("Gulf of St. Lawrence", "Atlantic Ocean", (48, -62)),
+
+            # Pacific Ocean Regions
+            ("South China Sea", "Pacific Ocean", (15, 115)),
+            ("East China Sea", "Pacific Ocean", (28, 125)),
+            ("Sea of Japan", "Pacific Ocean", (40, 135)),
+            ("Philippine Sea", "Pacific Ocean", (20, 130)),
+            ("Coral Sea", "Pacific Ocean", (-18, 152)),
+            ("Tasman Sea", "Pacific Ocean", (-40, 160)),
+            ("Bering Sea", "Pacific Ocean", (58, -175)),
+            ("Gulf of Alaska", "Pacific Ocean", (55, -145)),
+            ("Sea of Okhotsk", "Pacific Ocean", (55, 150)),
+            ("Yellow Sea", "Pacific Ocean", (35, 123)),
+            ("Gulf of California", "Pacific Ocean", (25, -110)),
+            ("Arafura Sea", "Pacific Ocean", (-10, 135)),
+            ("Timor Sea", "Indian Ocean", (-10, 127)),
+            ("Gulf of Thailand", "Pacific Ocean", (10, 100)),
+            ("Java Sea", "Pacific Ocean", (-5, 110)),
+            ("Andaman Sea", "Indian Ocean", (10, 95)),
+            ("Banda Sea", "Pacific Ocean", (-5, 128)),
+            ("Celebes Sea", "Pacific Ocean", (5, 125)),
+            ("Bismarck Sea", "Pacific Ocean", (-3, 146)),
+            ("Solomon Sea", "Pacific Ocean", (-8, 154)),
+            ("Gulf of Carpentaria", "Pacific Ocean", (-14, 137)),
+            ("Bering Strait", "Pacific Ocean", (66, -169)),
+            ("Cook Strait", "Pacific Ocean", (-41, 174)),
+            ("Strait of Malacca", "Indian Ocean", (4, 99)),
+            ("Gulf of Tonkin", "Pacific Ocean", (20, 108)),
+
+            # Indian Ocean Regions
+            ("Red Sea", "Indian Ocean", (20, 38)),
+            ("Arabian Sea", "Indian Ocean", (15, 65)),
+            ("Bay of Bengal", "Indian Ocean", (15, 90)),
+            ("Persian Gulf", "Indian Ocean", (26, 52)),
+            ("Gulf of Aden", "Indian Ocean", (12, 48)),
+            ("Mozambique Channel", "Indian Ocean", (-17, 42)),
+            ("Laccadive Sea", "Indian Ocean", (10, 75)),
+            ("Great Australian Bight", "Indian Ocean", (-35, 130)),
+
+            # Arctic Ocean Regions
+            ("Barents Sea", "Arctic Ocean", (75, 45)),
+            ("Kara Sea", "Arctic Ocean", (75, 70)),
+            ("Laptev Sea", "Arctic Ocean", (75, 130)),
+            ("East Siberian Sea", "Arctic Ocean", (72, 165)),
+            ("Chukchi Sea", "Arctic Ocean", (70, -165)),
+            ("Beaufort Sea", "Arctic Ocean", (72, -140)),
+            ("Greenland Sea", "Arctic Ocean", (75, -5)),
+            ("Lincoln Sea", "Arctic Ocean", (83, -50)),
+            ("Hudson Bay", "Arctic Ocean", (60, -85)),
+
+            # Southern Ocean Regions
+            ("Weddell Sea", "Southern Ocean", (-73, -45)),
+            ("Ross Sea", "Southern Ocean", (-75, 175)),
+            ("Amundsen Sea", "Southern Ocean", (-73, -115)),
+            ("Bellingshausen Sea", "Southern Ocean", (-70, -90)),
+            ("Scotia Sea", "Southern Ocean", (-55, -45)),
+
+            # Additional Seas and Straits
+            ("Black Sea", "Atlantic Ocean", (43, 35)),
+            ("Caspian Sea", "Atlantic Ocean", (41, 50)),
+            ("Azov Sea", "Atlantic Ocean", (46, 36)),
+            ("Marmara Sea", "Atlantic Ocean", (40.8, 28)),
+            ("Bosporus Strait", "Atlantic Ocean", (41, 29)),
+            ("Dardanelles Strait", "Atlantic Ocean", (40, 26)),
+            ("Strait of Gibraltar", "Atlantic Ocean", (36, -5)),
+            ("Strait of Hormuz", "Indian Ocean", (26, 56)),
+            ("Davis Strait", "Atlantic Ocean", (66, -58)),
+            ("Skagerrak", "Atlantic Ocean", (57, 10)),
+            ("Kattegat", "Atlantic Ocean", (56, 12)),
+            ("Gulf of Bothnia", "Atlantic Ocean", (63, 20)),
+            ("Gulf of Finland", "Atlantic Ocean", (60, 25)),
+            ("Sulu Sea", "Pacific Ocean", (8, 120)),
+            ("Gulf of Oman", "Indian Ocean", (24, 58)),
+            ("North Channel", "Atlantic Ocean", (55, -6)),
+            ("Norfolk Strait", "Pacific Ocean", (-39, 174)),
+            ("Bass Strait", "Pacific Ocean", (-40, 146)),
+            ("Korea Strait", "Pacific Ocean", (34, 129)),
+            ("Denmark Strait", "Atlantic Ocean", (66, -30)),
+            ("Fram Strait", "Arctic Ocean", (79, 0)),
+            ("Yucatan Channel", "Atlantic Ocean", (21.5, -86)),
+            ("Taiwan Strait", "Pacific Ocean", (24, 119))
+        ]
+
+        # Geolocator for location lookups
+        self.geolocator = Nominatim(user_agent="interactive_group_editor")
+
+        # Before plotting, try to update lat_lon and location from gb files
+        self._update_all_locations_from_gb()
 
         # Load data, set up interactions, add UI elements
         self._load_data()
@@ -90,33 +202,24 @@ class InteractiveGroupEditor:
             button={MouseButton.LEFT}, minspanx=5, minspany=5, spancoords='pixels'
         )
 
-        # Geolocator for location lookups
-        self.geolocator = Nominatim(user_agent="interactive_group_editor")
-
-        # Basic oceans list, add more if needed
-        self.oceans = [
-            ("Arctic Ocean", "Arctic Ocean", (82.5, -45)),
-            ("Atlantic Ocean", "Atlantic Ocean", (0, -30)),
-            ("Indian Ocean", "Indian Ocean", (-20, 80)),
-            ("Southern Ocean", "Southern Ocean", (-65, 140)),
-            ("Pacific Ocean", "Pacific Ocean", (0, -140))
-        ]
+    def _parse_genus_species_from_path(self, csv_path):
+        relative_path = os.path.relpath(csv_path, 'sequences/Interactive_group_editor')
+        parts = relative_path.split(os.sep)
+        genus = parts[0]
+        species_name = os.path.basename(csv_path).replace("_clustered.csv", "")
+        return genus, species_name
 
     def _get_or_create_csv_files(self):
         csv_files = self._get_csv_files()
         if not csv_files:
-            # No CSV found, try to create from MDS files
             self._create_csv_from_mds()
-            csv_files = self._get_csv_files()  # Check again after creation
+            csv_files = self._get_csv_files()
         return csv_files
 
     def _get_csv_files(self):
-        """
-        Find all '_clustered.csv' files under the base_directory.
-        Group them by genus (folder name) to populate dropdown menus.
-        """
+        base_dir = os.path.join("sequences", "Interactive_group_editor")
         csv_files = {}
-        for root, dirs, files in os.walk(self.base_directory):
+        for root, dirs, files in os.walk(base_dir):
             for file in files:
                 if file.endswith("_clustered.csv"):
                     family = os.path.basename(root)
@@ -126,24 +229,26 @@ class InteractiveGroupEditor:
         return sorted(csv_files.items())
 
     def _create_csv_from_mds(self):
-        """
-        If no CSV files exist, try to create them from MDS files.
-        MDS files should be named '[Species]_mds.mds' in:
-        sequences/CDS_Genus/[Genus]/CDS_nucleotide_gapped/MDS/[Species]/[Species]_mds.mds
-        """
         for root, dirs, files in os.walk(self.base_directory):
             for file in files:
                 if file.endswith("_mds.mds"):
                     mds_path = os.path.join(root, file)
                     species_name = file.replace("_mds.mds", "")
-                    csv_name = f"{species_name}_clustered.csv"
-                    csv_path = os.path.join(root, csv_name)
+                    rel_path = os.path.relpath(mds_path, self.base_directory)
+                    parts = rel_path.split(os.sep)
+                    genus = parts[0]
+
+                    interactive_dir = os.path.join("sequences", "Interactive_group_editor", genus, species_name)
+                    if not os.path.exists(interactive_dir):
+                        os.makedirs(interactive_dir)
+
+                    csv_path = os.path.join(interactive_dir, f"{species_name}_clustered.csv")
 
                     if not os.path.exists(csv_path):
                         try:
                             df_mds = pd.read_csv(mds_path, delim_whitespace=True)
                             if not {'FID', 'IID', 'C1', 'C2'}.issubset(df_mds.columns):
-                                logging.error(f"MDS file {mds_path} missing required columns (FID,IID,C1,C2).")
+                                logging.error(f"MDS file {mds_path} missing required columns.")
                                 continue
 
                             df_mds['Group'] = 1
@@ -152,9 +257,16 @@ class InteractiveGroupEditor:
                             df_mds['Location Source'] = 'N/A'
 
                             df_mds = df_mds[['FID', 'IID', 'C1', 'C2', 'Group', 'lat_lon', 'location', 'Location Source']]
-
                             df_mds.to_csv(csv_path, index=False)
                             logging.info(f"Created CSV from MDS file: {csv_path}")
+
+                            fasta_path = os.path.join(os.path.dirname(mds_path), f"{species_name}_concatenated_gapped_sequences.fasta")
+                            if os.path.exists(fasta_path):
+                                dest_fasta_path = os.path.join(interactive_dir, f"{species_name}_concatenated_gapped_sequences.fasta")
+                                shutil.copy2(fasta_path, dest_fasta_path)
+                                logging.info(f"Copied FASTA file: {fasta_path} to {dest_fasta_path}")
+                            else:
+                                logging.warning(f"No FASTA file found for {species_name}.")
                         except Exception as e:
                             logging.error(f"Error creating CSV from MDS {mds_path}: {e}")
 
@@ -165,9 +277,6 @@ class InteractiveGroupEditor:
                 self.df[col] = 'N/A'
 
     def _load_data(self):
-        """
-        Load data from self.df into the scatter plot.
-        """
         self.x = self.df['C1'].values
         self.y = self.df['C2'].values
         self.groups = self.df['Group'].values
@@ -302,6 +411,17 @@ class InteractiveGroupEditor:
         if self.selected_points:
             self.df.drop(self.df.index[self.selected_points], inplace=True)
             self.df.reset_index(drop=True, inplace=True)
+
+            interactive_dir = os.path.join("sequences", "Interactive_group_editor", self.genus, self.species_name)
+            interactive_fasta_path = os.path.join(interactive_dir, f"{self.species_name}_concatenated_gapped_sequences.fasta")
+            if os.path.exists(interactive_fasta_path):
+                from Bio import SeqIO
+                records = list(SeqIO.parse(interactive_fasta_path, "fasta"))
+                df_iids = set(self.df['IID'].tolist())
+                filtered_records = [r for r in records if r.id in df_iids]
+                with open(interactive_fasta_path, "w") as handle:
+                    SeqIO.write(filtered_records, handle, "fasta")
+
             self._load_data()
             self.fig.canvas.draw()
 
@@ -365,78 +485,6 @@ class InteractiveGroupEditor:
         ok_button = ctk.CTkButton(value_window, text="OK", command=value_window.destroy)
         ok_button.pack(pady=5)
 
-    def _get_lat_lon_and_location(self, iid):
-        # Stub function: returns N/A. Implement logic as needed.
-        return "N/A", "N/A"
-
-    def _parse_lat_lon(self, lat_lon_str):
-        if isinstance(lat_lon_str, float):
-            return None
-        try:
-            parts = lat_lon_str.split()
-            lat = float(parts[0])
-            if parts[1].upper() == 'S':
-                lat = -lat
-            lon = float(parts[2])
-            if parts[3].upper() == 'W':
-                lon = -lon
-            return (lat, lon)
-        except (ValueError, IndexError):
-            logging.error(f"Error parsing lat_lon string: {lat_lon_str}")
-            return None
-
-    def _get_location_name(self, lat_lon):
-        lat_lon_tuple = self._parse_lat_lon(lat_lon)
-        if lat_lon_tuple is None:
-            return "N/A"
-        try:
-            time.sleep(1)
-            location = self.geolocator.reverse(lat_lon_tuple, language='en')
-            if location:
-                return location.address
-        except Exception as e:
-            logging.error(f"Error getting location name for {lat_lon_tuple}: {e}")
-            return "N/A"
-        return "N/A"
-
-    def _get_closest_ocean(self, lat_lon):
-        lat_lon_tuple = self._parse_lat_lon(lat_lon)
-        if lat_lon_tuple is None:
-            return ("N/A", "N/A")
-        closest_ocean = ("N/A", "N/A")
-        min_distance = float('inf')
-        for ocean_name, major_ocean, ocean_coords in self.oceans:
-            distance = geodesic(lat_lon_tuple, ocean_coords).kilometers
-            if distance < min_distance:
-                min_distance = distance
-                closest_ocean = (major_ocean, ocean_name)
-        return closest_ocean
-
-    def _get_combined_location(self, lat_lon):
-        if lat_lon == "N/A":
-            return "N/A"
-        location_name = self._get_location_name(lat_lon)
-        major_ocean, specific_ocean = self._get_closest_ocean(lat_lon)
-        return f"{location_name} ({major_ocean}, {specific_ocean})"
-
-    def _toggle_all_point_values(self):
-        if hasattr(self, 'all_point_annotations') and self.all_point_annotations:
-            for annotation in self.all_point_annotations:
-                annotation.remove()
-            self.all_point_annotations = []
-        else:
-            self.all_point_annotations = []
-            for i in range(len(self.df)):
-                lat_lon_value = self.df['lat_lon'].iloc[i]
-                location_value = self.df['location'].iloc[i]
-                annotation = self.ax.annotate(
-                    f"IID: {self.df['IID'].iloc[i]} | ({self.df['C1'].iloc[i]:.2f}, {self.df['C2'].iloc[i]:.2f}) | lat_lon={lat_lon_value} | location={location_value}",
-                    (self.df['C1'].iloc[i], self.df['C2'].iloc[i]),
-                    textcoords="offset points", xytext=(5, 5), ha='center', fontsize=10,
-                    color='#333333')
-                self.all_point_annotations.append(annotation)
-        self.fig.canvas.draw()
-
     def _prompt_for_group(self):
         new_group = ctk.CTkInputDialog(title="Input", text="Enter new group for selected points:")
         try:
@@ -474,14 +522,17 @@ class InteractiveGroupEditor:
         except (FileNotFoundError, pd.errors.EmptyDataError) as e:
             raise ValueError(f"Error reading the CSV file: {e}")
         self.df_original = copy.deepcopy(self.df)
+
+        # Update genus and species based on new file
+        self.genus, self.species_name = self._parse_genus_species_from_path(self.csv_file)
+
+        # Update locations from gb again for the new file
+        self._update_all_locations_from_gb()
+
         self._load_data()
         self.fig.canvas.draw()
 
     def _save_csv_and_png(self):
-        """
-        Save CSV and PNG, then copy CSV, PNG, and MDS to:
-        sequences/Interactive_group_editor/[Genus]/[Species]/.mds
-        """
         self._deselect_all_points()
 
         if hasattr(self, 'rectangle_selector'):
@@ -493,23 +544,8 @@ class InteractiveGroupEditor:
             self.rectangle_selector.set_visible(False)
             self.fig.canvas.draw()
 
-        def update_lat_lon_and_location(row):
-            if pd.isna(row['lat_lon']) or row['lat_lon'] == "N/A":
-                lat_lon, location = self._get_lat_lon_and_location(row['IID'])
-                row['lat_lon'] = lat_lon
-                if lat_lon != "N/A":
-                    row['location'] = self._get_combined_location(lat_lon)
-                elif location != "N/A":
-                    row['location'] = location
-            return row
-
-        self.df = self.df.apply(update_lat_lon_and_location, axis=1)
-
-        self.df['Location Source'] = self.df.apply(
-            lambda r: r['Location Source'] if pd.notna(r['Location Source']) and r['Location Source'] not in ["", "N/A"]
-            else ("gb file" if r['lat_lon'] != "N/A" else r['Location Source']),
-            axis=1
-        )
+        # Re-apply lat_lon and location updates before saving
+        self.df = self.df.apply(self._final_location_updates, axis=1)
 
         csv_path = self.csv_file
         species_name = os.path.basename(csv_path).replace("_clustered.csv", "")
@@ -544,35 +580,43 @@ class InteractiveGroupEditor:
 
         self.df.to_csv(csv_path, index=False)
 
-        # Determine genus and species from file path
-        relative_path = os.path.relpath(csv_path, self.base_directory)
-        parts = relative_path.split(os.sep)
-        # parts[0] = Genus
-        genus = parts[0]
-
-        # MDS file: [Species]_mds.mds
+        genus, species_name = self._parse_genus_species_from_path(csv_path)
         mds_file_name = f"{species_name}_mds.mds"
-        mds_file_path = os.path.join(os.path.dirname(csv_path), mds_file_name)
+        fasta_file_name = f"{species_name}_concatenated_gapped_sequences.fasta"
 
-        # New directory: sequences/Interactive_group_editor/[Genus]/[Species]/.mds
-        interactive_dir = os.path.join("sequences", "Interactive_group_editor", genus, species_name, ".mds")
+        interactive_dir = os.path.join("sequences", "Interactive_group_editor", genus, species_name)
         if not os.path.exists(interactive_dir):
             os.makedirs(interactive_dir)
 
-        # Copy files
+        def safe_copy(src, dst):
+            if os.path.abspath(src) != os.path.abspath(dst):
+                shutil.copy2(src, dst)
+
+        # CSV
         dest_csv_path = os.path.join(interactive_dir, os.path.basename(csv_path))
+        safe_copy(csv_path, dest_csv_path)
+
+        # PNG
         dest_png_path = os.path.join(interactive_dir, os.path.basename(png_path))
-        shutil.copy2(csv_path, dest_csv_path)
-        shutil.copy2(png_path, dest_png_path)
+        safe_copy(png_path, dest_png_path)
+
+        # MDS
+        mds_file_path = os.path.join(interactive_dir, mds_file_name)
         if os.path.exists(mds_file_path):
             dest_mds_path = os.path.join(interactive_dir, os.path.basename(mds_file_path))
-            shutil.copy2(mds_file_path, dest_mds_path)
+            safe_copy(mds_file_path, dest_mds_path)
+
+        # FASTA
+        fasta_file_path = os.path.join(interactive_dir, fasta_file_name)
+        if os.path.exists(fasta_file_path):
+            dest_fasta_path = os.path.join(interactive_dir, fasta_file_name)
+            safe_copy(fasta_file_path, dest_fasta_path)
 
         if hasattr(self, 'rectangle_selector'):
             self.rectangle_selector.set_active(True)
             self.rectangle_selector.set_visible(True)
 
-        messagebox.showinfo("Save Successful", f"CSV, PNG, and MDS (if available) have been saved to:\n{interactive_dir}")
+        messagebox.showinfo("Save Successful", f"Files have been saved to:\n{interactive_dir}")
 
     def _open_ncbi_search(self, iids):
         modified_iids = [f"NC_{iid}" if len(str(iid)) == 6 else iid for iid in iids]
@@ -599,10 +643,219 @@ class InteractiveGroupEditor:
     def show(self):
         self.root.mainloop()
 
+    def _toggle_all_point_values(self):
+        if hasattr(self, 'all_point_annotations') and self.all_point_annotations:
+            for annotation in self.all_point_annotations:
+                annotation.remove()
+            self.all_point_annotations = []
+        else:
+            self.all_point_annotations = []
+            for i in range(len(self.df)):
+                lat_lon_value = self.df['lat_lon'].iloc[i]
+                location_value = self.df['location'].iloc[i]
+                annotation = self.ax.annotate(
+                    f"IID: {self.df['IID'].iloc[i]} | ({self.df['C1'].iloc[i]:.2f}, {self.df['C2'].iloc[i]:.2f}) | lat_lon={lat_lon_value} | location={location_value}",
+                    (self.df['C1'].iloc[i], self.df['C2'].iloc[i]),
+                    textcoords="offset points", xytext=(5, 5), ha='center', fontsize=10,
+                    color='#333333')
+                self.all_point_annotations.append(annotation)
+        self.fig.canvas.draw()
+
+    def _parse_lat_lon(self, lat_lon_str):
+        if isinstance(lat_lon_str, float):
+            return None
+        try:
+            parts = lat_lon_str.strip().split()
+            if len(parts) < 2:
+                return None
+            lat = float(parts[0])
+            # Check next part for hemisphere
+            if parts[1].upper().startswith('S'):
+                lat = -lat
+            elif parts[1].upper().startswith('N'):
+                pass
+            else:
+                # no hemisphere info, assume first coordinate is latitude anyway
+                # if no hemisphere given, just trust sign
+                pass
+
+            if len(parts) >= 4:
+                lon = float(parts[2])
+                if parts[3].upper().startswith('W'):
+                    lon = -lon
+            elif len(parts) == 2:
+                # just lat, lon with no hemisphere (unlikely)
+                lon = float(parts[1])
+            else:
+                return None
+            return (lat, lon)
+        except (ValueError, IndexError):
+            logging.error(f"Error parsing lat_lon string: {lat_lon_str}")
+            return None
+
+    def _get_location_name(self, lat_lon):
+        lat_lon_tuple = self._parse_lat_lon(lat_lon)
+        if lat_lon_tuple is None:
+            return "N/A"
+        try:
+            time.sleep(1)
+            location = self.geolocator.reverse(lat_lon_tuple, language='en')
+            if location:
+                return location.address
+        except Exception as e:
+            logging.error(f"Error getting location name for {lat_lon_tuple}: {e}")
+            return "N/A"
+        return "N/A"
+
+    def _get_closest_ocean(self, lat_lon):
+        lat_lon_tuple = self._parse_lat_lon(lat_lon)
+        if lat_lon_tuple is None:
+            return ("N/A", "N/A")
+        closest_ocean = ("N/A", "N/A")
+        min_distance = float('inf')
+        for ocean_name, major_ocean, ocean_coords in self.oceans:
+            distance = geodesic(lat_lon_tuple, ocean_coords).kilometers
+            if distance < min_distance:
+                min_distance = distance
+                closest_ocean = (major_ocean, ocean_name)
+        return closest_ocean
+
+    def _get_lat_lon_and_location(self, iid):
+        parts = iid.split("_", 1)
+        if len(parts) > 1:
+            acc_id = parts[0]
+            full_species = parts[1]
+        else:
+            acc_id = iid.split("_")[0]
+            full_species = self.species_name
+
+        gb_dir = os.path.join("sequences", "gb", full_species)
+        lat_lon = "N/A"
+        location = "N/A"
+        location_source = "N/A"
+
+        possible_files = [
+            os.path.join(gb_dir, acc_id + ".gb"),
+            os.path.join(gb_dir, acc_id + ".gbk")
+        ]
+
+        gb_file_path = None
+        for p in possible_files:
+            if os.path.exists(p):
+                gb_file_path = p
+                break
+
+        if not gb_file_path:
+            logging.debug(f"No gb files found for IID {iid} in {gb_dir}.")
+            return lat_lon, location, location_source
+
+        logging.debug(f"Parsing GenBank file {gb_file_path} for IID {iid}")
+        try:
+            with open(gb_file_path, "r") as gb_file:
+                for record in SeqIO.parse(gb_file, "genbank"):
+                    found_geo_loc = None
+                    found_pop_variant = None
+                    found_country = None
+                    found_altitude = None
+
+                    if "lat_lon" in record.annotations:
+                        lat_lon = record.annotations["lat_lon"]
+
+                    for feature in record.features:
+                        if "lat_lon" in feature.qualifiers:
+                            lat_lon = feature.qualifiers["lat_lon"][0]
+                        if "geo_loc_name" in feature.qualifiers:
+                            found_geo_loc = feature.qualifiers["geo_loc_name"][0]
+                        if "pop_variant" in feature.qualifiers:
+                            found_pop_variant = feature.qualifiers["pop_variant"][0]
+                        if "country" in feature.qualifiers:
+                            found_country = feature.qualifiers["country"][0]
+                        if "altitude" in feature.qualifiers:
+                            found_altitude = feature.qualifiers["altitude"][0]
+
+                    if found_geo_loc and found_geo_loc.strip():
+                        location = found_geo_loc
+                        location_source = "gb file"
+                    elif found_pop_variant and found_pop_variant.strip():
+                        location = found_pop_variant
+                        location_source = "gb file"
+                    elif found_country and found_country.strip():
+                        location = found_country
+                        location_source = "gb file"
+                    elif found_altitude and found_altitude.strip():
+                        location = found_altitude
+                        location_source = "gb file"
+
+                    # If lat_lon found but no location from gb file, try geolocator
+                    if lat_lon != "N/A" and (location == "N/A" or location.strip() == ""):
+                        resolved_name = self._get_location_name(lat_lon)
+                        if resolved_name and resolved_name != "N/A":
+                            location = resolved_name
+                            location_source = "lat_lon lookup"
+                        else:
+                            # No geolocator location, try oceans
+                            major_ocean, ocean_name = self._get_closest_ocean(lat_lon)
+                            if major_ocean != "N/A":
+                                location = f"{major_ocean}, {ocean_name}"
+                                location_source = "lat_lon lookup"
+
+                    break
+        except Exception as e:
+            logging.error(f"Error reading GenBank file {gb_file_path}: {e}")
+
+        logging.debug(f"For IID {iid}, extracted lat_lon={lat_lon}, location={location}, source={location_source}")
+        return lat_lon, location, location_source
+
+    def _update_all_locations_from_gb(self):
+        logging.debug("Updating all locations from gb files at initialization.")
+
+        def update_lat_lon_and_location(row):
+            if ((pd.isna(row['lat_lon']) or row['lat_lon'] == "N/A")
+                and (pd.isna(row['location']) or row['location'] == "N/A")):
+                lat_lon, loc, loc_source = self._get_lat_lon_and_location(row['IID'])
+                row['lat_lon'] = lat_lon
+                row['location'] = loc
+                row['Location Source'] = loc_source
+            else:
+                # If we have lat_lon but no location, try reverse lookup and ocean fallback
+                if row['lat_lon'] != "N/A" and (row['location'] == "N/A" or row['location'].strip() == ""):
+                    resolved_name = self._get_location_name(row['lat_lon'])
+                    if resolved_name and resolved_name != "N/A":
+                        row['location'] = resolved_name
+                        row['Location Source'] = "lat_lon lookup"
+                    else:
+                        # fallback to ocean
+                        major_ocean, ocean_name = self._get_closest_ocean(row['lat_lon'])
+                        if major_ocean != "N/A":
+                            row['location'] = f"{major_ocean}, {ocean_name}"
+                            row['Location Source'] = "lat_lon lookup"
+
+                if row['location'] != "N/A" and (row['Location Source'] == "N/A" or row['Location Source'].strip() == ""):
+                    row['Location Source'] = "gb file"
+            return row
+
+        self.df = self.df.apply(update_lat_lon_and_location, axis=1)
+
+    def _final_location_updates(self, row):
+        if row['lat_lon'] != "N/A" and (row['location'] == "N/A" or row['location'].strip() == ""):
+            resolved_name = self._get_location_name(row['lat_lon'])
+            if resolved_name and resolved_name != "N/A":
+                row['location'] = resolved_name
+                row['Location Source'] = "lat_lon lookup"
+            else:
+                # fallback to ocean
+                major_ocean, ocean_name = self._get_closest_ocean(row['lat_lon'])
+                if major_ocean != "N/A":
+                    row['location'] = f"{major_ocean}, {ocean_name}"
+                    row['Location Source'] = "lat_lon lookup"
+
+        if row['location'] != "N/A" and (row['Location Source'] == "N/A" or row['Location Source'].strip() == ""):
+            row['Location Source'] = "gb file"
+        return row
+
 
 # Example usage:
 if __name__ == '__main__':
-    # Adjust the base_directory as needed
     base_directory = 'sequences/CDS_Genus'
     editor = InteractiveGroupEditor(base_directory)
     editor.show()
