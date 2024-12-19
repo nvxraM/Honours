@@ -11,6 +11,7 @@ pattern = re.compile(r'^(\S+)\s+(\S+)\s+Population\s+(\d+)\s+(\S+)\s+(\S+)$')
 
 results = {}
 
+
 def parse_file(filepath, genus, species, value_key, se_key):
     if os.path.exists(filepath):
         with open(filepath, 'r', encoding='utf-8') as f:
@@ -35,9 +36,11 @@ def parse_file(filepath, genus, species, value_key, se_key):
                     results[genus][species][pop_num][value_key] = float(value_str)
                     results[genus][species][pop_num][se_key] = float(se_str)
 
+
 def gc_content_third_position(seq_list):
     third_position_bases = []
     for seq_str in seq_list:
+        # Extract every 3rd base starting from the third base (index 2)
         codon_third_bases = seq_str[2::3]
         third_position_bases.append(codon_third_bases)
 
@@ -45,6 +48,7 @@ def gc_content_third_position(seq_list):
     if all_third_positions:
         return gc_fraction(all_third_positions) * 100
     return None
+
 
 # Scan directories
 for genus in os.listdir(base_dir):
@@ -65,6 +69,7 @@ for genus in os.listdir(base_dir):
         nonsyn_file = os.path.join(mega_pop_path, f'{species_dir_name}_nonsynonymous_only.txt')
         syn_file = os.path.join(mega_pop_path, f'{species_dir_name}_Synonymous_only.txt')
 
+        # Parse metric files (d, dN, dS)
         if os.path.exists(d_file):
             parse_file(d_file, genus, species_dir_name, 'd', 'd_SE')
         if os.path.exists(nonsyn_file):
@@ -72,29 +77,74 @@ for genus in os.listdir(base_dir):
         if os.path.exists(syn_file):
             parse_file(syn_file, genus, species_dir_name, 'dS', 'dS_SE')
 
-avg_gc_per_species = {}
-sequence_count_per_species = {}
+        # Parse the grp file to map each accession to its population
+        grp_file = os.path.join(mega_pop_path, f'{species_dir_name}_population.grp')
+        population_to_accessions = {}
+        if os.path.exists(grp_file):
+            with open(grp_file, 'r', encoding='utf-8') as gf:
+                for line in gf:
+                    line = line.strip()
+                    if not line or line.startswith('#'):
+                        continue
+                    # Example line:
+                    # PP761291.1_Delphinus_delphis=Delphinus_delphis_Population_2
+                    # Left side is accession, right side contains population info
+                    if '=' in line:
+                        left, right = line.split('=', 1)
+                        # right might look like "Delphinus_delphis_Population_2"
+                        # Extract population number from the right part
+                        pop_match = re.search(r'_Population_(\d+)$', right)
+                        if pop_match:
+                            pop_num = int(pop_match.group(1))
+                            if pop_num not in population_to_accessions:
+                                population_to_accessions[pop_num] = []
+                            population_to_accessions[pop_num].append(left)
 
-for genus in results.keys():
-    avg_gc_per_species[genus] = {}
-    sequence_count_per_species[genus] = {}
+        # Now read the fasta file and assign sequences to populations
+        fasta_path = os.path.join(base_dir, genus, species_dir_name,
+                                  f"{species_dir_name}_concatenated_gapped_sequences.fasta")
+        if os.path.exists(fasta_path) and os.path.getsize(fasta_path) > 0:
+            # Create a dictionary to hold sequences per population
+            population_sequences = {pop_num: [] for pop_num in population_to_accessions.keys()}
 
-    for species in results[genus].keys():
-        fasta_path = os.path.join(base_dir, genus, species, f"{species}_concatenated_gapped_sequences.fasta")
-        if os.path.exists(fasta_path):
-            species_sequences = [str(record.seq) for record in SeqIO.parse(fasta_path, "fasta")]
-            if species_sequences:
-                gc_val = gc_content_third_position(species_sequences)
-                seq_count = len(species_sequences)
-                avg_gc_per_species[genus][species] = gc_val
-                sequence_count_per_species[genus][species] = seq_count
-            else:
-                avg_gc_per_species[genus][species] = None
-                sequence_count_per_species[genus][species] = None
+            for record in SeqIO.parse(fasta_path, "fasta"):
+                # record.id should match something like 'PP761291.1_Delphinus_delphis'
+                # Check which population this record belongs to
+                for pop_num, acc_list in population_to_accessions.items():
+                    if record.id in acc_list:
+                        population_sequences[pop_num].append(str(record.seq))
+
+            # Compute GC content at 3rd codon position for each population
+            for pop_num, seqs in population_sequences.items():
+                if seqs:
+                    gc_val = gc_content_third_position(seqs)
+                else:
+                    gc_val = None
+                # Store the GC3 value in results if that population already exists
+                # (It should, since we parsed d/dN/dS files, but if not, create it)
+                if genus not in results:
+                    results[genus] = {}
+                if species_dir_name not in results[genus]:
+                    results[genus][species_dir_name] = {}
+                if pop_num not in results[genus][species_dir_name]:
+                    results[genus][species_dir_name][pop_num] = {}
+                results[genus][species_dir_name][pop_num]['GC3'] = gc_val
+                results[genus][species_dir_name][pop_num]['Sequence_Count'] = len(seqs)
         else:
-            avg_gc_per_species[genus][species] = None
-            sequence_count_per_species[genus][species] = None
+            # If no fasta found or it's empty, still ensure GC3 entries exist
+            # This is only relevant if there were populations defined
+            for pop_num in population_to_accessions.keys():
+                if genus not in results:
+                    results[genus] = {}
+                if species_dir_name not in results[genus]:
+                    results[genus][species_dir_name] = {}
+                if pop_num not in results[genus][species_dir_name]:
+                    results[genus][species_dir_name][pop_num] = {}
+                # No sequences, so no GC3
+                results[genus][species_dir_name][pop_num]['GC3'] = None
+                results[genus][species_dir_name][pop_num]['Sequence_Count'] = None
 
+# Now generate the DataFrame
 rows = []
 for genus, species_data in results.items():
     for species, pop_data in species_data.items():
@@ -105,11 +155,10 @@ for genus, species_data in results.items():
             dN_SE = metrics.get('dN_SE')
             dS = metrics.get('dS')
             dS_SE = metrics.get('dS_SE')
+            gc_value = metrics.get('GC3')
+            seq_count = metrics.get('Sequence_Count')
 
             dn_ds_ratio = None
-            gc_value = avg_gc_per_species.get(genus, {}).get(species, None)
-            seq_count = sequence_count_per_species.get(genus, {}).get(species, None)
-
             avg_gen_time = None
             avg_body_size = None
             avg_life_span = None
@@ -125,7 +174,7 @@ for genus, species_data in results.items():
                 'dS': dS,
                 'dS S.E.': dS_SE,
                 'dN/dS Ratio': dn_ds_ratio,
-                'GC3 (%)': gc_value,  # Renamed column here
+                'Avg GC3 (%)': gc_value,
                 'Sequence No.': seq_count,
                 'Avg. generation time (Years)': avg_gen_time,
                 'Avg. body Size (Kg)': avg_body_size,
@@ -135,7 +184,7 @@ for genus, species_data in results.items():
 
 df = pd.DataFrame(rows, columns=[
     'Genus', 'Species', 'Population', 'd', 'd S.E.', 'dN', 'dN S.E.',
-    'dS', 'dS S.E.', 'dN/dS Ratio', 'GC3 (%)',
+    'dS', 'dS S.E.', 'dN/dS Ratio', 'Avg GC3 (%)',
     'Sequence No.', 'Avg. generation time (Years)',
     'Avg. body Size (Kg)', 'Avg. Life Span (Years)'
 ])

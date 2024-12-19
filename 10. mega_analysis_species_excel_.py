@@ -37,6 +37,19 @@ def parse_file(filepath, genus, value_key, se_key):
                     results[genus][species_name][value_key] = float(value_str)
                     results[genus][species_name][se_key] = float(se_str)
 
+def gc_content_third_position(seq_list):
+    """
+    Calculate GC content (%) based only on the third codon positions of all sequences combined.
+    """
+    third_position_bases = []
+    for seq_str in seq_list:
+        codon_third_bases = seq_str[2::3]
+        third_position_bases.append(codon_third_bases)
+    all_third_positions = "".join(third_position_bases)
+    if all_third_positions:
+        return gc_fraction(all_third_positions) * 100
+    return None
+
 # Parse all text files for each genus
 for genus in os.listdir(root_dir):
     genus_path = os.path.join(root_dir, genus, 'MEGA_Grouped_by_Species')
@@ -82,8 +95,8 @@ for genus in results.keys():
         genus_gc = {}
         genus_count = {}
         for sp_name, seq_list in species_sequences.items():
-            full_seq = ''.join(seq_list)
-            genus_gc[sp_name] = gc_fraction(full_seq) * 100
+            # Changed this line to use the third position GC content
+            genus_gc[sp_name] = gc_content_third_position(seq_list)
             genus_count[sp_name] = len(seq_list)
 
         avg_gc_per_species[genus] = genus_gc
@@ -127,7 +140,7 @@ for genus, species_data in results.items():
             'dS': dS,
             'dS S.E.': dS_SE,
             'dN/dS Ratio': dn_ds_ratio,
-            'Avg genome GC (%)': gc_value,
+            'Avg GC3 (%)': gc_value,
             'Sequence No.': seq_count,
             'Avg. generation time (Years)': avg_gen_time,
             'Avg. body Size (Kg)': avg_body_size,
@@ -138,7 +151,7 @@ for genus, species_data in results.items():
 # Create DataFrame with the desired columns
 df = pd.DataFrame(rows, columns=[
     'Genus', 'Species', 'd', 'd S.E.', 'dN', 'dN S.E.',
-    'dS', 'dS S.E.', 'dN/dS Ratio', 'Avg genome GC (%)',
+    'dS', 'dS S.E.', 'dN/dS Ratio', 'Avg GC3 (%)',
     'Sequence No.', 'Avg. generation time (Years)',
     'Avg. body Size (Kg)', 'Avg. Life Span (Years)'
 ])
