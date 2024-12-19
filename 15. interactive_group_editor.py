@@ -9,7 +9,6 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.widgets import RectangleSelector
 import copy
 import os
-import time
 import webbrowser
 from Bio import SeqIO
 from geopy.geocoders import Nominatim
@@ -17,21 +16,27 @@ from geopy.distance import geodesic
 import logging
 import shutil
 from tkinter import messagebox
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
+
+#
+#
+# Currently there is a bug after saving a species you need to close and re open or it will through an error and crash when switch to a new species after saving!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+#
+#
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# Use TkAgg backend for GUI functionality
+# Use TkAgg backend for GUI
 matplotlib.use('TkAgg')
 
 
 class InteractiveGroupEditor:
     """
     A GUI application to interactively edit group assignments of MDS data points.
-    If no CSV files exist, tries to create them from MDS files and directly places them in:
-    sequences/Interactive_group_editor/[Genus]/[Species].
-    After editing, copies all files (CSV, PNG, MDS, FASTA) to:
-    sequences/Interactive_group_editor/[Genus]/[Species].
+    It allows loading data from CSV files (optionally creates them from MDS if missing),
+    editing groups, and saving the results.
     """
 
     def __init__(self, base_directory):
@@ -42,7 +47,7 @@ class InteractiveGroupEditor:
         if not self.csv_file:
             raise FileNotFoundError("No CSV files found or created in the specified directory.")
 
-        # Load CSV
+        # Load initial CSV
         try:
             self.df = pd.read_csv(self.csv_file)
             self._ensure_columns_exist()
@@ -51,11 +56,11 @@ class InteractiveGroupEditor:
 
         self.df_original = copy.deepcopy(self.df)
 
-        # Parse genus and species from current CSV file path
+        # Parse genus and species from the current CSV file path
         self.genus, self.species_name = self._parse_genus_species_from_path(self.csv_file)
 
         # Configure customtkinter appearance
-        ctk.set_appearance_mode("System")
+        ctk.set_appearance_mode("light")
         ctk.set_default_color_theme("blue")
 
         # Create main application window
@@ -77,117 +82,20 @@ class InteractiveGroupEditor:
 
         self.species_file_map = {}
 
-        # Extended oceans and seas list
-        self.oceans = [
-            ("Arctic Ocean", "Arctic Ocean", (82.5, -45)),
-            ("Atlantic Ocean", "Atlantic Ocean", (0, -30)),
-            ("Indian Ocean", "Indian Ocean", (-20, 80)),
-            ("Southern Ocean", "Southern Ocean", (-65, 140)),
-            ("Pacific Ocean", "Pacific Ocean", (0, -140)),
+        # List of oceans and seas for fallback location naming
+        self.oceans = self._get_ocean_list()
 
-            # Atlantic Ocean Regions
-            ("Mediterranean Sea", "Atlantic Ocean", (35, 18)),
-            ("Caribbean Sea", "Atlantic Ocean", (15, -75)),
-            ("Gulf of Mexico", "Atlantic Ocean", (25, -90)),
-            ("Baltic Sea", "Atlantic Ocean", (58, 20)),
-            ("North Sea", "Atlantic Ocean", (56, 3)),
-            ("Norwegian Sea", "Atlantic Ocean", (68, 5)),
-            ("Sargasso Sea", "Atlantic Ocean", (30, -60)),
-            ("Labrador Sea", "Atlantic Ocean", (58, -55)),
-            ("Gulf of Guinea", "Atlantic Ocean", (0, 5)),
-            ("English Channel", "Atlantic Ocean", (50, -1)),
-            ("Bay of Biscay", "Atlantic Ocean", (45, -5)),
-            ("Irish Sea", "Atlantic Ocean", (54, -5)),
-            ("Gulf of St. Lawrence", "Atlantic Ocean", (48, -62)),
-
-            # Pacific Ocean Regions
-            ("South China Sea", "Pacific Ocean", (15, 115)),
-            ("East China Sea", "Pacific Ocean", (28, 125)),
-            ("Sea of Japan", "Pacific Ocean", (40, 135)),
-            ("Philippine Sea", "Pacific Ocean", (20, 130)),
-            ("Coral Sea", "Pacific Ocean", (-18, 152)),
-            ("Tasman Sea", "Pacific Ocean", (-40, 160)),
-            ("Bering Sea", "Pacific Ocean", (58, -175)),
-            ("Gulf of Alaska", "Pacific Ocean", (55, -145)),
-            ("Sea of Okhotsk", "Pacific Ocean", (55, 150)),
-            ("Yellow Sea", "Pacific Ocean", (35, 123)),
-            ("Gulf of California", "Pacific Ocean", (25, -110)),
-            ("Arafura Sea", "Pacific Ocean", (-10, 135)),
-            ("Timor Sea", "Indian Ocean", (-10, 127)),
-            ("Gulf of Thailand", "Pacific Ocean", (10, 100)),
-            ("Java Sea", "Pacific Ocean", (-5, 110)),
-            ("Andaman Sea", "Indian Ocean", (10, 95)),
-            ("Banda Sea", "Pacific Ocean", (-5, 128)),
-            ("Celebes Sea", "Pacific Ocean", (5, 125)),
-            ("Bismarck Sea", "Pacific Ocean", (-3, 146)),
-            ("Solomon Sea", "Pacific Ocean", (-8, 154)),
-            ("Gulf of Carpentaria", "Pacific Ocean", (-14, 137)),
-            ("Bering Strait", "Pacific Ocean", (66, -169)),
-            ("Cook Strait", "Pacific Ocean", (-41, 174)),
-            ("Strait of Malacca", "Indian Ocean", (4, 99)),
-            ("Gulf of Tonkin", "Pacific Ocean", (20, 108)),
-
-            # Indian Ocean Regions
-            ("Red Sea", "Indian Ocean", (20, 38)),
-            ("Arabian Sea", "Indian Ocean", (15, 65)),
-            ("Bay of Bengal", "Indian Ocean", (15, 90)),
-            ("Persian Gulf", "Indian Ocean", (26, 52)),
-            ("Gulf of Aden", "Indian Ocean", (12, 48)),
-            ("Mozambique Channel", "Indian Ocean", (-17, 42)),
-            ("Laccadive Sea", "Indian Ocean", (10, 75)),
-            ("Great Australian Bight", "Indian Ocean", (-35, 130)),
-
-            # Arctic Ocean Regions
-            ("Barents Sea", "Arctic Ocean", (75, 45)),
-            ("Kara Sea", "Arctic Ocean", (75, 70)),
-            ("Laptev Sea", "Arctic Ocean", (75, 130)),
-            ("East Siberian Sea", "Arctic Ocean", (72, 165)),
-            ("Chukchi Sea", "Arctic Ocean", (70, -165)),
-            ("Beaufort Sea", "Arctic Ocean", (72, -140)),
-            ("Greenland Sea", "Arctic Ocean", (75, -5)),
-            ("Lincoln Sea", "Arctic Ocean", (83, -50)),
-            ("Hudson Bay", "Arctic Ocean", (60, -85)),
-
-            # Southern Ocean Regions
-            ("Weddell Sea", "Southern Ocean", (-73, -45)),
-            ("Ross Sea", "Southern Ocean", (-75, 175)),
-            ("Amundsen Sea", "Southern Ocean", (-73, -115)),
-            ("Bellingshausen Sea", "Southern Ocean", (-70, -90)),
-            ("Scotia Sea", "Southern Ocean", (-55, -45)),
-
-            # Additional Seas and Straits
-            ("Black Sea", "Atlantic Ocean", (43, 35)),
-            ("Caspian Sea", "Atlantic Ocean", (41, 50)),
-            ("Azov Sea", "Atlantic Ocean", (46, 36)),
-            ("Marmara Sea", "Atlantic Ocean", (40.8, 28)),
-            ("Bosporus Strait", "Atlantic Ocean", (41, 29)),
-            ("Dardanelles Strait", "Atlantic Ocean", (40, 26)),
-            ("Strait of Gibraltar", "Atlantic Ocean", (36, -5)),
-            ("Strait of Hormuz", "Indian Ocean", (26, 56)),
-            ("Davis Strait", "Atlantic Ocean", (66, -58)),
-            ("Skagerrak", "Atlantic Ocean", (57, 10)),
-            ("Kattegat", "Atlantic Ocean", (56, 12)),
-            ("Gulf of Bothnia", "Atlantic Ocean", (63, 20)),
-            ("Gulf of Finland", "Atlantic Ocean", (60, 25)),
-            ("Sulu Sea", "Pacific Ocean", (8, 120)),
-            ("Gulf of Oman", "Indian Ocean", (24, 58)),
-            ("North Channel", "Atlantic Ocean", (55, -6)),
-            ("Norfolk Strait", "Pacific Ocean", (-39, 174)),
-            ("Bass Strait", "Pacific Ocean", (-40, 146)),
-            ("Korea Strait", "Pacific Ocean", (34, 129)),
-            ("Denmark Strait", "Atlantic Ocean", (66, -30)),
-            ("Fram Strait", "Arctic Ocean", (79, 0)),
-            ("Yucatan Channel", "Atlantic Ocean", (21.5, -86)),
-            ("Taiwan Strait", "Pacific Ocean", (24, 119))
-        ]
-
-        # Geolocator for location lookups
+        # Initialize geolocator for location lookups
         self.geolocator = Nominatim(user_agent="interactive_group_editor")
 
-        # Before plotting, try to update lat_lon and location from gb files
-        self._update_all_locations_from_gb()
+        # Caches
+        self.gb_cache = {}
+        self.geolocator_cache = {}
 
-        # Load data, set up interactions, add UI elements
+        # Update locations from GenBank files in parallel
+        self._update_all_locations_from_gb_parallel()
+
+        # Load data into the plot
         self._load_data()
         self._connect_events()
         self._add_command_buttons()
@@ -280,7 +188,6 @@ class InteractiveGroupEditor:
         self.x = self.df['C1'].values
         self.y = self.df['C2'].values
         self.groups = self.df['Group'].values
-        self.iids = self.df['IID'].values
 
         colors = [self.group_colors.get(g, 'gray') for g in self.groups]
         if hasattr(self, 'scatters'):
@@ -306,7 +213,7 @@ class InteractiveGroupEditor:
         button_frame = ctk.CTkScrollableFrame(self.root)
         button_frame.pack(side='right', fill='both', padx=20, pady=20, expand=True)
 
-        ctk.CTkLabel(button_frame, text="Select Family and Species", font=('Helvetica', 18, 'bold'), anchor='center').pack(pady=(0, 15), fill='x')
+        ctk.CTkLabel(button_frame, text="Select Species", font=('Segoe UI', 18, 'bold'), anchor='center').pack(pady=(0, 15), fill='x')
 
         self.selected_family = ctk.StringVar(self.root)
         self.selected_species = ctk.StringVar(self.root)
@@ -324,26 +231,25 @@ class InteractiveGroupEditor:
             self.selected_family.set(self.csv_files[0][0])
             self._update_species_menu(self.csv_files[0][0])
 
-        ctk.CTkLabel(button_frame, text="Edit Functions", font=('Helvetica', 18, 'bold'), anchor='center').pack(pady=(20, 15), fill='x')
+        ctk.CTkLabel(button_frame, text="Edit Functions", font=('Segoe UI', 18, 'bold'), anchor='center').pack(pady=(20, 15), fill='x')
+        ctk.CTkButton(button_frame, text="Deselect All Points", command=self._deselect_all_points, width=200, height=40, font=('Segoe UI', 14)).pack(pady=5, fill='x')
+        ctk.CTkButton(button_frame, text="Delete Selected Points", command=self._delete_selected_points, width=200, height=40, font=('Segoe UI', 14)).pack(pady=5, fill='x')
 
-        ctk.CTkButton(button_frame, text="Deselect All Points", command=self._deselect_all_points, width=200, height=40, font=('Helvetica', 16)).pack(pady=5, fill='x')
-        ctk.CTkButton(button_frame, text="Delete Selected Points", command=self._delete_selected_points, width=200, height=40, font=('Helvetica', 16)).pack(pady=5, fill='x')
-        ctk.CTkButton(button_frame, text="Reassign Group", command=self._reassign_group, width=200, height=40, font=('Helvetica', 16)).pack(pady=5, fill='x')
-        ctk.CTkButton(button_frame, text="Undo Changes", command=self._undo_changes, width=200, height=40, font=('Helvetica', 16)).pack(pady=5, fill='x')
-        ctk.CTkButton(button_frame, text="Show Selected Point Values", command=self._show_selected_point_values, width=200, height=40, font=('Helvetica', 16)).pack(pady=5, fill='x')
-        ctk.CTkButton(button_frame, text="Toggle All Point Values", command=self._toggle_all_point_values, width=200, height=40, font=('Helvetica', 16)).pack(pady=5, fill='x')
-        ctk.CTkButton(button_frame, text="Search Selected Points on NCBI", command=self._search_selected_points_ncbi, width=200, height=40, font=('Helvetica', 16)).pack(pady=5, fill='x')
+        ctk.CTkButton(button_frame, text="Undo Changes", command=self._undo_changes, width=200, height=40, font=('Segoe UI', 14)).pack(pady=5, fill='x')
+        ctk.CTkButton(button_frame, text="Show Selected Point Values", command=self._show_selected_point_values, width=200, height=40, font=('Segoe UI', 14)).pack(pady=5, fill='x')
+        ctk.CTkButton(button_frame, text="Toggle Point Values", command=self._toggle_all_point_values, width=200, height=40, font=('Segoe UI', 14)).pack(pady=5, fill='x')
 
-        ctk.CTkLabel(button_frame, text="Assign Groups", font=('Helvetica', 18, 'bold'), anchor='center').pack(pady=(20, 15), fill='x')
+        ctk.CTkButton(button_frame, text="Search Selected Points on NCBI", command=self._search_selected_points_ncbi, width=200, height=40, font=('Segoe UI', 14)).pack(pady=5, fill='x')
 
+        ctk.CTkLabel(button_frame, text="Assign Groups", font=('Segoe UI', 18, 'bold'), anchor='center').pack(pady=(20, 15), fill='x')
         for group_num in range(1, 8):
             ctk.CTkButton(button_frame, text=f"Group {group_num}",
                           command=lambda g=group_num: self._assign_to_group(g),
                           fg_color=self.group_colors.get(group_num, '#e0e0e0'),
-                          width=200, height=40, font=('Helvetica', 16)).pack(pady=5, fill='x')
+                          width=200, height=40, font=('Segoe UI', 14)).pack(pady=5, fill='x')
 
         ctk.CTkButton(button_frame, text="Save CSV and PNG", command=self._save_csv_and_png, width=200, height=40,
-                      font=('Helvetica', 16, 'bold'), fg_color='#34a853').pack(pady=20, fill='x')
+                      font=('Segoe UI', 16, 'bold'), fg_color='#34a853').pack(pady=20, fill='x')
 
         canvas_plot = FigureCanvasTkAgg(self.fig, master=self.root)
         canvas_plot.get_tk_widget().pack(side='left', fill='both', expand=True, padx=20, pady=20)
@@ -369,8 +275,7 @@ class InteractiveGroupEditor:
                               markerfacecolor=self.group_colors.get(group, 'gray'),
                               markersize=10, label=label)
             handles.append(line)
-        self.legend = self.ax.legend(handles=handles, title='Groups',
-                                     loc='best', framealpha=0.6)
+        self.legend = self.ax.legend(handles=handles, title='Groups', loc='best', framealpha=0.6)
 
     def _on_click(self, event):
         if event.button == MouseButton.LEFT and event.dblclick:
@@ -425,30 +330,6 @@ class InteractiveGroupEditor:
             self._load_data()
             self.fig.canvas.draw()
 
-    def _reassign_group(self):
-        if self.selected_points:
-            new_group = self._prompt_for_group()
-            if new_group is not None:
-                for i in self.selected_points:
-                    if i < len(self.df):
-                        self.df.at[self.df.index[i], 'Group'] = new_group
-                self._update_scatter()
-                self.selected_points.clear()
-                self._update_selected_points()
-                self.legend.remove()
-                self._add_legend()
-
-    def _assign_to_group(self, group):
-        if self.selected_points:
-            for i in self.selected_points:
-                if i < len(self.df):
-                    self.df.at[self.df.index[i], 'Group'] = group
-            self._update_scatter()
-            self.selected_points.clear()
-            self._update_selected_points()
-            self.legend.remove()
-            self._add_legend()
-
     def _undo_changes(self):
         self.df = copy.deepcopy(self.df_original)
         self._load_data()
@@ -458,10 +339,6 @@ class InteractiveGroupEditor:
         if not self.selected_points:
             messagebox.showwarning("Warning", "Please select at least one point to view its values.")
             return
-
-        loading_label = ctk.CTkLabel(self.root, text="Loading, please wait...", font=('Helvetica', 16, 'bold'))
-        loading_label.pack(pady=10)
-        self.root.update_idletasks()
 
         values = []
         for idx in self.selected_points:
@@ -473,11 +350,10 @@ class InteractiveGroupEditor:
                 location_value = self.df['location'].iloc[idx]
                 values.append(f"IID: {iid_value} | ({c1_value:.2f}, {c2_value:.2f}) | lat_lon={lat_lon_value} | location={location_value}")
 
-        loading_label.destroy()
         value_window = tk.Toplevel(self.root)
         value_window.title("Selected Point Values")
         value_window.geometry('1200x800')
-        text_box = tk.Text(value_window, wrap='word', font=('Helvetica', 12))
+        text_box = tk.Text(value_window, wrap='word', font=('Segoe UI', 12))
         text_box.insert('1.0', "\n".join(values))
         text_box.config(state='normal')
         text_box.see('1.0')
@@ -485,12 +361,16 @@ class InteractiveGroupEditor:
         ok_button = ctk.CTkButton(value_window, text="OK", command=value_window.destroy)
         ok_button.pack(pady=5)
 
-    def _prompt_for_group(self):
-        new_group = ctk.CTkInputDialog(title="Input", text="Enter new group for selected points:")
-        try:
-            return int(new_group.get_input())
-        except ValueError:
-            return None
+    def _assign_to_group(self, group):
+        if self.selected_points:
+            for i in self.selected_points:
+                if i < len(self.df):
+                    self.df.at[self.df.index[i], 'Group'] = group
+            self._update_scatter()
+            self.selected_points.clear()
+            self._update_selected_points()
+            self.legend.remove()
+            self._add_legend()
 
     def _update_scatter(self):
         colors = [self.group_colors.get(g, 'gray') for g in self.df['Group'].values]
@@ -504,8 +384,7 @@ class InteractiveGroupEditor:
         if self.selected_points:
             selected_x = [self.df['C1'].iloc[i] for i in self.selected_points if i < len(self.df)]
             selected_y = [self.df['C2'].iloc[i] for i in self.selected_points if i < len(self.df)]
-            self.highlight_scatter = self.ax.scatter(selected_x, selected_y, facecolors='yellow', edgecolors='black',
-                                                     s=100, linewidths=2)
+            self.highlight_scatter = self.ax.scatter(selected_x, selected_y, facecolors='yellow', edgecolors='black', s=100, linewidths=2)
         self.fig.canvas.draw()
 
     def _change_csv_file(self, selected_file):
@@ -523,12 +402,45 @@ class InteractiveGroupEditor:
             raise ValueError(f"Error reading the CSV file: {e}")
         self.df_original = copy.deepcopy(self.df)
 
-        # Update genus and species based on new file
+        # Update genus/species
         self.genus, self.species_name = self._parse_genus_species_from_path(self.csv_file)
 
-        # Update locations from gb again for the new file
-        self._update_all_locations_from_gb()
+        self._show_loading_window()
 
+        def run_updates():
+            self._update_all_locations_from_gb_parallel(show_progress=True)
+            self.root.after(0, self._close_loading_window)
+
+        threading.Thread(target=run_updates, daemon=True).start()
+
+    def _show_loading_window(self):
+        self.loading_window = tk.Toplevel(self.root)
+        self.loading_window.title("Loading Data")
+        self.loading_window.geometry("400x150")
+        self.loading_window.grab_set()
+        self.loading_window.protocol("WM_DELETE_WINDOW", lambda: None)  # disable close
+
+        label = ctk.CTkLabel(self.loading_window, text="Loading new species data, please wait...", font=('Segoe UI', 14))
+        label.pack(pady=(20, 10), fill='x')
+
+        self.progress_var = tk.DoubleVar()
+        self.progress_bar = ctk.CTkProgressBar(self.loading_window, variable=self.progress_var, orientation='horizontal', width=300)
+        self.progress_bar.pack(pady=(10, 5))
+        self.progress_label = ctk.CTkLabel(self.loading_window, text="0%")
+        self.progress_label.pack(pady=(5, 20))
+
+        self.loading_window.update_idletasks()
+
+    def _update_loading_progress(self, current, total):
+        percentage = (current / total) * 100
+        self.progress_var.set(percentage)
+        self.progress_label.configure(text=f"{int(percentage)}%")
+        self.loading_window.update_idletasks()
+
+    def _close_loading_window(self):
+        if self.loading_window is not None:
+            self.loading_window.destroy()
+            self.loading_window = None
         self._load_data()
         self.fig.canvas.draw()
 
@@ -538,19 +450,11 @@ class InteractiveGroupEditor:
         if hasattr(self, 'rectangle_selector'):
             self.rectangle_selector.set_active(False)
 
-        time.sleep(1)
-
-        if hasattr(self, 'rectangle_selector'):
-            self.rectangle_selector.set_visible(False)
-            self.fig.canvas.draw()
-
-        # Re-apply lat_lon and location updates before saving
         self.df = self.df.apply(self._final_location_updates, axis=1)
 
         csv_path = self.csv_file
         species_name = os.path.basename(csv_path).replace("_clustered.csv", "")
 
-        # Create PNG
         fig_save, ax_save = plt.subplots(figsize=(12, 10))
         ax_save.scatter(self.df['C1'], self.df['C2'],
                         c=[self.group_colors.get(g, 'gray') for g in self.df['Group']],
@@ -581,9 +485,6 @@ class InteractiveGroupEditor:
         self.df.to_csv(csv_path, index=False)
 
         genus, species_name = self._parse_genus_species_from_path(csv_path)
-        mds_file_name = f"{species_name}_mds.mds"
-        fasta_file_name = f"{species_name}_concatenated_gapped_sequences.fasta"
-
         interactive_dir = os.path.join("sequences", "Interactive_group_editor", genus, species_name)
         if not os.path.exists(interactive_dir):
             os.makedirs(interactive_dir)
@@ -592,21 +493,18 @@ class InteractiveGroupEditor:
             if os.path.abspath(src) != os.path.abspath(dst):
                 shutil.copy2(src, dst)
 
-        # CSV
         dest_csv_path = os.path.join(interactive_dir, os.path.basename(csv_path))
         safe_copy(csv_path, dest_csv_path)
-
-        # PNG
         dest_png_path = os.path.join(interactive_dir, os.path.basename(png_path))
         safe_copy(png_path, dest_png_path)
 
-        # MDS
+        mds_file_name = f"{species_name}_mds.mds"
+        fasta_file_name = f"{species_name}_concatenated_gapped_sequences.fasta"
         mds_file_path = os.path.join(interactive_dir, mds_file_name)
         if os.path.exists(mds_file_path):
             dest_mds_path = os.path.join(interactive_dir, os.path.basename(mds_file_path))
             safe_copy(mds_file_path, dest_mds_path)
 
-        # FASTA
         fasta_file_path = os.path.join(interactive_dir, fasta_file_name)
         if os.path.exists(fasta_file_path):
             dest_fasta_path = os.path.join(interactive_dir, fasta_file_name)
@@ -619,8 +517,14 @@ class InteractiveGroupEditor:
         messagebox.showinfo("Save Successful", f"Files have been saved to:\n{interactive_dir}")
 
     def _open_ncbi_search(self, iids):
-        modified_iids = [f"NC_{iid}" if len(str(iid)) == 6 else iid for iid in iids]
-        search_query = ' OR '.join([f"{iid}[All Fields]" for iid in modified_iids])
+        final_ids = []
+        for iid in iids:
+            parts = iid.split('_', 1)
+            acc_with_version = parts[0]
+            acc = acc_with_version.split('.')[0]
+            final_ids.append(acc)
+
+        search_query = ' OR '.join([f"{iid}[All Fields]" for iid in final_ids])
         url = f"https://www.ncbi.nlm.nih.gov/pmc?term={search_query}"
         try:
             webbrowser.open(url, new=2)
@@ -637,8 +541,8 @@ class InteractiveGroupEditor:
     def _on_close(self):
         if messagebox.askyesno("Exit", "Do you want to save changes before exiting?"):
             self._save_csv_and_png()
+        # Just destroy the root. No sys.exit().
         self.root.destroy()
-        sys.exit()
 
     def show(self):
         self.root.mainloop()
@@ -662,49 +566,55 @@ class InteractiveGroupEditor:
         self.fig.canvas.draw()
 
     def _parse_lat_lon(self, lat_lon_str):
-        if isinstance(lat_lon_str, float):
+        if isinstance(lat_lon_str, float) or lat_lon_str == "N/A" or pd.isna(lat_lon_str):
             return None
         try:
             parts = lat_lon_str.strip().split()
             if len(parts) < 2:
                 return None
             lat = float(parts[0])
-            # Check next part for hemisphere
-            if parts[1].upper().startswith('S'):
-                lat = -lat
-            elif parts[1].upper().startswith('N'):
-                pass
+            # If second token like "S", adjust latitude
+            # If lat/lon in decimal degrees without letters, no adjustment needed
+            if len(parts) > 1 and (parts[1].upper().startswith('S') or parts[1].upper().startswith('N')):
+                # This format might be "12.3 N 45.6 E" or similar
+                # Check if parts are in form: lat N lon E
+                # If so, parse appropriately
+                # Example: "12.3 N 45.6 E"
+                if len(parts) >= 4:
+                    if parts[1].upper().startswith('S'):
+                        lat = -lat
+                    lon = float(parts[2])
+                    if parts[3].upper().startswith('W'):
+                        lon = -lon
+                else:
+                    # Not enough info, try just lat and lon directly
+                    return None
             else:
-                # no hemisphere info, assume first coordinate is latitude anyway
-                # if no hemisphere given, just trust sign
-                pass
-
-            if len(parts) >= 4:
-                lon = float(parts[2])
-                if parts[3].upper().startswith('W'):
-                    lon = -lon
-            elif len(parts) == 2:
-                # just lat, lon with no hemisphere (unlikely)
+                # Assume format: lat lon directly in decimal
+                # e.g. "12.3 -45.6"
                 lon = float(parts[1])
-            else:
-                return None
             return (lat, lon)
         except (ValueError, IndexError):
             logging.error(f"Error parsing lat_lon string: {lat_lon_str}")
             return None
 
     def _get_location_name(self, lat_lon):
+        if lat_lon in self.geolocator_cache:
+            return self.geolocator_cache[lat_lon]
+
         lat_lon_tuple = self._parse_lat_lon(lat_lon)
         if lat_lon_tuple is None:
+            self.geolocator_cache[lat_lon] = "N/A"
             return "N/A"
         try:
-            time.sleep(1)
             location = self.geolocator.reverse(lat_lon_tuple, language='en')
             if location:
+                self.geolocator_cache[lat_lon] = location.address
                 return location.address
         except Exception as e:
             logging.error(f"Error getting location name for {lat_lon_tuple}: {e}")
-            return "N/A"
+
+        self.geolocator_cache[lat_lon] = "N/A"
         return "N/A"
 
     def _get_closest_ocean(self, lat_lon):
@@ -721,6 +631,9 @@ class InteractiveGroupEditor:
         return closest_ocean
 
     def _get_lat_lon_and_location(self, iid):
+        if iid in self.gb_cache:
+            return self.gb_cache[iid]
+
         parts = iid.split("_", 1)
         if len(parts) > 1:
             acc_id = parts[0]
@@ -746,10 +659,9 @@ class InteractiveGroupEditor:
                 break
 
         if not gb_file_path:
-            logging.debug(f"No gb files found for IID {iid} in {gb_dir}.")
+            self.gb_cache[iid] = (lat_lon, location, location_source)
             return lat_lon, location, location_source
 
-        logging.debug(f"Parsing GenBank file {gb_file_path} for IID {iid}")
         try:
             with open(gb_file_path, "r") as gb_file:
                 for record in SeqIO.parse(gb_file, "genbank"):
@@ -786,72 +698,174 @@ class InteractiveGroupEditor:
                         location = found_altitude
                         location_source = "gb file"
 
-                    # If lat_lon found but no location from gb file, try geolocator
                     if lat_lon != "N/A" and (location == "N/A" or location.strip() == ""):
                         resolved_name = self._get_location_name(lat_lon)
                         if resolved_name and resolved_name != "N/A":
                             location = resolved_name
                             location_source = "lat_lon lookup"
                         else:
-                            # No geolocator location, try oceans
                             major_ocean, ocean_name = self._get_closest_ocean(lat_lon)
                             if major_ocean != "N/A":
                                 location = f"{major_ocean}, {ocean_name}"
                                 location_source = "lat_lon lookup"
-
                     break
         except Exception as e:
             logging.error(f"Error reading GenBank file {gb_file_path}: {e}")
 
-        logging.debug(f"For IID {iid}, extracted lat_lon={lat_lon}, location={location}, source={location_source}")
+        self.gb_cache[iid] = (lat_lon, location, location_source)
         return lat_lon, location, location_source
 
-    def _update_all_locations_from_gb(self):
-        logging.debug("Updating all locations from gb files at initialization.")
+    def _update_all_locations_from_gb_parallel(self, show_progress=False):
+        mask = ((self.df['lat_lon'].isna()) | (self.df['lat_lon'] == "N/A")) & ((self.df['location'].isna()) | (self.df['location'] == "N/A"))
+        indices_to_update = self.df[mask].index.tolist()
 
-        def update_lat_lon_and_location(row):
-            if ((pd.isna(row['lat_lon']) or row['lat_lon'] == "N/A")
-                and (pd.isna(row['location']) or row['location'] == "N/A")):
-                lat_lon, loc, loc_source = self._get_lat_lon_and_location(row['IID'])
-                row['lat_lon'] = lat_lon
-                row['location'] = loc
-                row['Location Source'] = loc_source
-            else:
-                # If we have lat_lon but no location, try reverse lookup and ocean fallback
-                if row['lat_lon'] != "N/A" and (row['location'] == "N/A" or row['location'].strip() == ""):
-                    resolved_name = self._get_location_name(row['lat_lon'])
-                    if resolved_name and resolved_name != "N/A":
-                        row['location'] = resolved_name
-                        row['Location Source'] = "lat_lon lookup"
-                    else:
-                        # fallback to ocean
-                        major_ocean, ocean_name = self._get_closest_ocean(row['lat_lon'])
-                        if major_ocean != "N/A":
-                            row['location'] = f"{major_ocean}, {ocean_name}"
-                            row['Location Source'] = "lat_lon lookup"
+        if not indices_to_update:
+            if show_progress and hasattr(self, '_close_loading_window'):
+                self.root.after(0, self._close_loading_window)
+            return
 
-                if row['location'] != "N/A" and (row['Location Source'] == "N/A" or row['Location Source'].strip() == ""):
-                    row['Location Source'] = "gb file"
-            return row
+        def update_row(idx):
+            row = self.df.loc[idx]
+            lat_lon, loc, loc_source = self._get_lat_lon_and_location(row['IID'])
 
-        self.df = self.df.apply(update_lat_lon_and_location, axis=1)
+            if lat_lon != "N/A" and (loc == "N/A" or not loc.strip()):
+                resolved_name = self._get_location_name(lat_lon)
+                if resolved_name != "N/A":
+                    loc = resolved_name
+                    loc_source = "lat_lon lookup"
+                else:
+                    major_ocean, ocean_name = self._get_closest_ocean(lat_lon)
+                    if major_ocean != "N/A":
+                        loc = f"{major_ocean}, {ocean_name}"
+                        loc_source = "lat_lon lookup"
+
+            if loc != "N/A" and (loc_source == "N/A" or not loc_source.strip()):
+                loc_source = "gb file"
+            return idx, lat_lon, loc, loc_source
+
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            futures = [executor.submit(update_row, i) for i in indices_to_update]
+
+            total = len(futures)
+            done_count = 0
+
+            for future in as_completed(futures):
+                result = future.result()
+                idx, lat_lon, loc, loc_source = result
+                self.df.at[idx, 'lat_lon'] = lat_lon
+                self.df.at[idx, 'location'] = loc
+                self.df.at[idx, 'Location Source'] = loc_source
+                done_count += 1
+                if show_progress:
+                    self.root.after(0, self._update_loading_progress, done_count, total)
 
     def _final_location_updates(self, row):
-        if row['lat_lon'] != "N/A" and (row['location'] == "N/A" or row['location'].strip() == ""):
+        if row['lat_lon'] != "N/A" and (row['location'] == "N/A" or not row['location'].strip()):
             resolved_name = self._get_location_name(row['lat_lon'])
-            if resolved_name and resolved_name != "N/A":
+            if resolved_name != "N/A":
                 row['location'] = resolved_name
                 row['Location Source'] = "lat_lon lookup"
             else:
-                # fallback to ocean
                 major_ocean, ocean_name = self._get_closest_ocean(row['lat_lon'])
                 if major_ocean != "N/A":
                     row['location'] = f"{major_ocean}, {ocean_name}"
                     row['Location Source'] = "lat_lon lookup"
 
-        if row['location'] != "N/A" and (row['Location Source'] == "N/A" or row['Location Source'].strip() == ""):
+        if row['location'] != "N/A" and (row['Location Source'] == "N/A" or not row['Location Source'].strip()):
             row['Location Source'] = "gb file"
         return row
+
+    def _get_ocean_list(self):
+        return [
+            ("Arctic Ocean", "Arctic Ocean", (82.5, -45)),
+            ("Atlantic Ocean", "Atlantic Ocean", (0, -30)),
+            ("Indian Ocean", "Indian Ocean", (-20, 80)),
+            ("Southern Ocean", "Southern Ocean", (-65, 140)),
+            ("Pacific Ocean", "Pacific Ocean", (0, -140)),
+            ("Mediterranean Sea", "Atlantic Ocean", (35, 18)),
+            ("Caribbean Sea", "Atlantic Ocean", (15, -75)),
+            ("Gulf of Mexico", "Atlantic Ocean", (25, -90)),
+            ("Baltic Sea", "Atlantic Ocean", (58, 20)),
+            ("North Sea", "Atlantic Ocean", (56, 3)),
+            ("Norwegian Sea", "Atlantic Ocean", (68, 5)),
+            ("Sargasso Sea", "Atlantic Ocean", (30, -60)),
+            ("Labrador Sea", "Atlantic Ocean", (58, -55)),
+            ("Gulf of Guinea", "Atlantic Ocean", (0, 5)),
+            ("English Channel", "Atlantic Ocean", (50, -1)),
+            ("Bay of Biscay", "Atlantic Ocean", (45, -5)),
+            ("Irish Sea", "Atlantic Ocean", (54, -5)),
+            ("Gulf of St. Lawrence", "Atlantic Ocean", (48, -62)),
+            ("South China Sea", "Pacific Ocean", (15, 115)),
+            ("East China Sea", "Pacific Ocean", (28, 125)),
+            ("Sea of Japan", "Pacific Ocean", (40, 135)),
+            ("Philippine Sea", "Pacific Ocean", (20, 130)),
+            ("Coral Sea", "Pacific Ocean", (-18, 152)),
+            ("Tasman Sea", "Pacific Ocean", (-40, 160)),
+            ("Bering Sea", "Pacific Ocean", (58, -175)),
+            ("Gulf of Alaska", "Pacific Ocean", (55, -145)),
+            ("Sea of Okhotsk", "Pacific Ocean", (55, 150)),
+            ("Yellow Sea", "Pacific Ocean", (35, 123)),
+            ("Gulf of California", "Pacific Ocean", (25, -110)),
+            ("Arafura Sea", "Pacific Ocean", (-10, 135)),
+            ("Timor Sea", "Indian Ocean", (-10, 127)),
+            ("Gulf of Thailand", "Pacific Ocean", (10, 100)),
+            ("Java Sea", "Pacific Ocean", (-5, 110)),
+            ("Andaman Sea", "Indian Ocean", (10, 95)),
+            ("Banda Sea", "Pacific Ocean", (-5, 128)),
+            ("Celebes Sea", "Pacific Ocean", (5, 125)),
+            ("Bismarck Sea", "Pacific Ocean", (-3, 146)),
+            ("Solomon Sea", "Pacific Ocean", (-8, 154)),
+            ("Gulf of Carpentaria", "Pacific Ocean", (-14, 137)),
+            ("Bering Strait", "Pacific Ocean", (66, -169)),
+            ("Cook Strait", "Pacific Ocean", (-41, 174)),
+            ("Strait of Malacca", "Indian Ocean", (4, 99)),
+            ("Gulf of Tonkin", "Pacific Ocean", (20, 108)),
+            ("Red Sea", "Indian Ocean", (20, 38)),
+            ("Arabian Sea", "Indian Ocean", (15, 65)),
+            ("Bay of Bengal", "Indian Ocean", (15, 90)),
+            ("Persian Gulf", "Indian Ocean", (26, 52)),
+            ("Gulf of Aden", "Indian Ocean", (12, 48)),
+            ("Mozambique Channel", "Indian Ocean", (-17, 42)),
+            ("Laccadive Sea", "Indian Ocean", (10, 75)),
+            ("Great Australian Bight", "Indian Ocean", (-35, 130)),
+            ("Barents Sea", "Arctic Ocean", (75, 45)),
+            ("Kara Sea", "Arctic Ocean", (75, 70)),
+            ("Laptev Sea", "Arctic Ocean", (75, 130)),
+            ("East Siberian Sea", "Arctic Ocean", (72, 165)),
+            ("Chukchi Sea", "Arctic Ocean", (70, -165)),
+            ("Beaufort Sea", "Arctic Ocean", (72, -140)),
+            ("Greenland Sea", "Arctic Ocean", (75, -5)),
+            ("Lincoln Sea", "Arctic Ocean", (83, -50)),
+            ("Hudson Bay", "Arctic Ocean", (60, -85)),
+            ("Weddell Sea", "Southern Ocean", (-73, -45)),
+            ("Ross Sea", "Southern Ocean", (-75, 175)),
+            ("Amundsen Sea", "Southern Ocean", (-73, -115)),
+            ("Bellingshausen Sea", "Southern Ocean", (-70, -90)),
+            ("Scotia Sea", "Southern Ocean", (-55, -45)),
+            ("Black Sea", "Atlantic Ocean", (43, 35)),
+            ("Caspian Sea", "Atlantic Ocean", (41, 50)),
+            ("Azov Sea", "Atlantic Ocean", (46, 36)),
+            ("Marmara Sea", "Atlantic Ocean", (40.8, 28)),
+            ("Bosporus Strait", "Atlantic Ocean", (41, 29)),
+            ("Dardanelles Strait", "Atlantic Ocean", (40, 26)),
+            ("Strait of Gibraltar", "Atlantic Ocean", (36, -5)),
+            ("Strait of Hormuz", "Indian Ocean", (26, 56)),
+            ("Davis Strait", "Atlantic Ocean", (66, -58)),
+            ("Skagerrak", "Atlantic Ocean", (57, 10)),
+            ("Kattegat", "Atlantic Ocean", (56, 12)),
+            ("Gulf of Bothnia", "Atlantic Ocean", (63, 20)),
+            ("Gulf of Finland", "Atlantic Ocean", (60, 25)),
+            ("Sulu Sea", "Pacific Ocean", (8, 120)),
+            ("Gulf of Oman", "Indian Ocean", (24, 58)),
+            ("North Channel", "Atlantic Ocean", (55, -6)),
+            ("Norfolk Strait", "Pacific Ocean", (-39, 174)),
+            ("Bass Strait", "Pacific Ocean", (-40, 146)),
+            ("Korea Strait", "Pacific Ocean", (34, 129)),
+            ("Denmark Strait", "Atlantic Ocean", (66, -30)),
+            ("Fram Strait", "Arctic Ocean", (79, 0)),
+            ("Yucatan Channel", "Atlantic Ocean", (21.5, -86)),
+            ("Taiwan Strait", "Pacific Ocean", (24, 119))
+        ]
 
 
 # Example usage:
