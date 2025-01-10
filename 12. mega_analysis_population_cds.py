@@ -44,8 +44,6 @@ def create_grp_file_from_csv(csv_path):
     # Write .grp file: each line "IID=species_Population_GroupNumber"
     with open(grp_path, "w", encoding='utf-8') as grp_file:
         for iid, grp in zip(iids, groups):
-            # Change the output format as requested:
-            # Instead of: IID=grp, we do: IID={species}_Population_{grp}
             grp_file.write(f"{iid}={species}_Population_{grp}\n")
 
     return grp_path
@@ -94,6 +92,7 @@ def run_mega_analysis(megacc_executable, settings_files, tasks):
     Run MEGA analyses given a list of tasks.
     Each task: (genus, species, grp_file, fasta_file)
     For each .mao in settings_files, run analysis.
+    If the output file already exists, skip to avoid re-running.
     """
     if not os.path.isfile(megacc_executable):
         print(f"Error: MEGA executable not found at {megacc_executable}")
@@ -110,19 +109,34 @@ def run_mega_analysis(megacc_executable, settings_files, tasks):
                     print(f"Warning: Settings file not found: {mao_file}")
                     continue
 
-                # Determine analysis type based on the mao file name
-                mao_basename = os.path.basename(mao_file)
+                mao_basename = os.path.basename(mao_file).lower()
+
+                # Determine analysis type and output file name based on .mao file name
                 if "nucleotide" in mao_basename:
                     analysis_type = "d_value"
-                elif "nonsynonymous_only" in mao_basename:
+                    output_file = os.path.join(out_dir, f"{species}_{analysis_type}.meg")
+                elif "nonsynonymous_only" in mao_basename and "between" not in mao_basename:
+                    # For within-group nonsynonymous_only
                     analysis_type = "nonsynonymous_only"
-                elif "Synonymous_only" in mao_basename or "Synonymous-only" in mao_basename:
+                    output_file = os.path.join(out_dir, f"{species}_{analysis_type}.meg")
+                elif "synonymous_only" in mao_basename and "between" not in mao_basename:
+                    # For within-group Synonymous_only
                     analysis_type = "Synonymous_only"
+                    output_file = os.path.join(out_dir, f"{species}_{analysis_type}.meg")
+                elif "synonymous_only" in mao_basename and "between" in mao_basename:
+                    # New case: Between-group Synonymous_only
+                    analysis_type = "Synonymous_only_between"
+                    # As requested, output as a .txt file
+                    output_file = os.path.join(out_dir, f"{species}_Synonymous_only_between.txt")
                 else:
                     # Generic fallback
-                    analysis_type = mao_basename.replace(".mao","")
+                    analysis_type = mao_basename.replace(".mao", "")
+                    output_file = os.path.join(out_dir, f"{species}_{analysis_type}.meg")
 
-                output_file = os.path.join(out_dir, f"{species}_{analysis_type}.meg")
+                # Check if output file already exists, skip if it does
+                if os.path.exists(output_file):
+                    print(f"Skipping analysis '{analysis_type}' for {genus}/{species} - output already exists.")
+                    continue
 
                 command = [
                     megacc_executable,
@@ -132,8 +146,10 @@ def run_mega_analysis(megacc_executable, settings_files, tasks):
                     "-o", output_file
                 ]
 
-                futures.append((genus, species, analysis_type, executor.submit(subprocess.run, command, check=True)))
+                future = executor.submit(subprocess.run, command, check=True)
+                futures.append((genus, species, analysis_type, future))
 
+        # Collect results
         for genus, species, analysis_type, future in futures:
             try:
                 future.result()
@@ -150,11 +166,13 @@ if __name__ == "__main__":
     # Path to the MEGA command-line executable
     megacc_executable = r"C:\Program Files\MEGA11\megacc.exe"
 
-    # List of .mao setting files
+    # List of .mao setting files, including the new "between"-group file
     settings_files = [
         r"C:\Users\freem\OneDrive\Documents\USC\Honours\Analysis\MegaCC settings\distance_estimation_within_grp_avg_nucleotide.mao",
         r"C:\Users\freem\OneDrive\Documents\USC\Honours\Analysis\MegaCC settings\distance_estimation_within_grp_avg_syn-nonsynonymous(nonsynonymous_only).mao",
-        r"C:\Users\freem\OneDrive\Documents\USC\Honours\Analysis\MegaCC settings\distance_estimation_within_grp_avg_syn-nonsynonymous(Synonymous_only).mao"
+        r"C:\Users\freem\OneDrive\Documents\USC\Honours\Analysis\MegaCC settings\distance_estimation_within_grp_avg_syn-nonsynonymous(Synonymous_only).mao",
+        # New settings file for between-group Synonymous-only distances
+        r"C:\Users\freem\OneDrive\Documents\USC\Honours\Analysis\MegaCC settings\distance_estimation_between_grp_avg_syn-nonsynonymous(Synonymous_only).mao"
     ]
 
     # Create .grp files and gather tasks

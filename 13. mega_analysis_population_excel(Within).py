@@ -4,15 +4,22 @@ import pandas as pd
 from Bio import SeqIO
 from Bio.SeqUtils import gc_fraction
 
+# Input data directory
 base_dir = 'sequences/Interactive_group_editor'
 
-# Matches lines like: "Balaena mysticetus Population 1    0.00171694  0.00029752"
+# Output directory (changed to sequences/MEGA)
+output_dir = 'sequences/MEGA'
+
+# Regex to match lines like: "Balaena mysticetus Population 1    0.00171694  0.00029752"
 pattern = re.compile(r'^(\S+)\s+(\S+)\s+Population\s+(\d+)\s+(\S+)\s+(\S+)$')
 
 results = {}
 
-
 def parse_file(filepath, genus, species, value_key, se_key):
+    """
+    Parses a file line by line to extract values for d, dN, or dS (and their S.E.).
+    Updates the global 'results' dictionary in place.
+    """
     if os.path.exists(filepath):
         with open(filepath, 'r', encoding='utf-8') as f:
             for line in f:
@@ -36,11 +43,13 @@ def parse_file(filepath, genus, species, value_key, se_key):
                     results[genus][species][pop_num][value_key] = float(value_str)
                     results[genus][species][pop_num][se_key] = float(se_str)
 
-
 def gc_content_third_position(seq_list):
+    """
+    Calculates the GC% at the third codon position, given a list of sequence strings.
+    """
     third_position_bases = []
     for seq_str in seq_list:
-        # Extract every 3rd base starting from the third base (index 2)
+        # Extract every 3rd base starting from the 3rd base (index 2)
         codon_third_bases = seq_str[2::3]
         third_position_bases.append(codon_third_bases)
 
@@ -49,8 +58,7 @@ def gc_content_third_position(seq_list):
         return gc_fraction(all_third_positions) * 100
     return None
 
-
-# Scan directories
+# Scan the base_dir for genus -> species -> MEGA_Populations
 for genus in os.listdir(base_dir):
     genus_path = os.path.join(base_dir, genus)
     if not os.path.isdir(genus_path):
@@ -65,11 +73,12 @@ for genus in os.listdir(base_dir):
         if not os.path.isdir(mega_pop_path):
             continue
 
+        # Files containing various metrics
         d_file = os.path.join(mega_pop_path, f'{species_dir_name}_d_value.txt')
         nonsyn_file = os.path.join(mega_pop_path, f'{species_dir_name}_nonsynonymous_only.txt')
         syn_file = os.path.join(mega_pop_path, f'{species_dir_name}_Synonymous_only.txt')
 
-        # Parse metric files (d, dN, dS)
+        # Parse d, dN, dS from these files if they exist
         if os.path.exists(d_file):
             parse_file(d_file, genus, species_dir_name, 'd', 'd_SE')
         if os.path.exists(nonsyn_file):
@@ -88,11 +97,10 @@ for genus in os.listdir(base_dir):
                         continue
                     # Example line:
                     # PP761291.1_Delphinus_delphis=Delphinus_delphis_Population_2
-                    # Left side is accession, right side contains population info
+                    # Left side is the accession, right side has population info
                     if '=' in line:
                         left, right = line.split('=', 1)
-                        # right might look like "Delphinus_delphis_Population_2"
-                        # Extract population number from the right part
+                        # right might look like: Delphinus_delphis_Population_2
                         pop_match = re.search(r'_Population_(\d+)$', right)
                         if pop_match:
                             pop_num = int(pop_match.group(1))
@@ -100,39 +108,41 @@ for genus in os.listdir(base_dir):
                                 population_to_accessions[pop_num] = []
                             population_to_accessions[pop_num].append(left)
 
-        # Now read the fasta file and assign sequences to populations
-        fasta_path = os.path.join(base_dir, genus, species_dir_name,
-                                  f"{species_dir_name}_concatenated_gapped_sequences.fasta")
+        # Read the fasta file and assign sequences to populations
+        fasta_path = os.path.join(
+            base_dir,
+            genus,
+            species_dir_name,
+            f"{species_dir_name}_concatenated_gapped_sequences.fasta"
+        )
+
         if os.path.exists(fasta_path) and os.path.getsize(fasta_path) > 0:
-            # Create a dictionary to hold sequences per population
-            population_sequences = {pop_num: [] for pop_num in population_to_accessions.keys()}
+            # Dictionary to hold sequences for each population
+            population_sequences = {
+                pop_num: [] for pop_num in population_to_accessions.keys()
+            }
 
             for record in SeqIO.parse(fasta_path, "fasta"):
-                # record.id should match something like 'PP761291.1_Delphinus_delphis'
-                # Check which population this record belongs to
+                # record.id should match something like: PP761291.1_Delphinus_delphis
                 for pop_num, acc_list in population_to_accessions.items():
                     if record.id in acc_list:
                         population_sequences[pop_num].append(str(record.seq))
 
             # Compute GC content at 3rd codon position for each population
             for pop_num, seqs in population_sequences.items():
-                if seqs:
-                    gc_val = gc_content_third_position(seqs)
-                else:
-                    gc_val = None
-                # Store the GC3 value in results if that population already exists
-                # (It should, since we parsed d/dN/dS files, but if not, create it)
+                gc_val = gc_content_third_position(seqs) if seqs else None
+
                 if genus not in results:
                     results[genus] = {}
                 if species_dir_name not in results[genus]:
                     results[genus][species_dir_name] = {}
                 if pop_num not in results[genus][species_dir_name]:
                     results[genus][species_dir_name][pop_num] = {}
+
                 results[genus][species_dir_name][pop_num]['GC3'] = gc_val
                 results[genus][species_dir_name][pop_num]['Sequence_Count'] = len(seqs)
         else:
-            # If no fasta found or it's empty, still ensure GC3 entries exist
-            # This is only relevant if there were populations defined
+            # If no fasta found or it's empty, still ensure GC3 placeholders exist
             for pop_num in population_to_accessions.keys():
                 if genus not in results:
                     results[genus] = {}
@@ -140,11 +150,11 @@ for genus in os.listdir(base_dir):
                     results[genus][species_dir_name] = {}
                 if pop_num not in results[genus][species_dir_name]:
                     results[genus][species_dir_name][pop_num] = {}
-                # No sequences, so no GC3
+
                 results[genus][species_dir_name][pop_num]['GC3'] = None
                 results[genus][species_dir_name][pop_num]['Sequence_Count'] = None
 
-# Now generate the DataFrame
+# Build a list of rows for the DataFrame
 rows = []
 for genus, species_data in results.items():
     for species, pop_data in species_data.items():
@@ -158,6 +168,7 @@ for genus, species_data in results.items():
             gc_value = metrics.get('GC3')
             seq_count = metrics.get('Sequence_Count')
 
+            # Placeholders for additional metrics
             dn_ds_ratio = None
             avg_gen_time = None
             avg_body_size = None
@@ -182,6 +193,7 @@ for genus, species_data in results.items():
             }
             rows.append(row)
 
+# Create the DataFrame
 df = pd.DataFrame(rows, columns=[
     'Genus', 'Species', 'Population', 'd', 'd S.E.', 'dN', 'dN S.E.',
     'dS', 'dS S.E.', 'dN/dS Ratio', 'Avg GC3 (%)',
@@ -189,8 +201,10 @@ df = pd.DataFrame(rows, columns=[
     'Avg. body Size (Kg)', 'Avg. Life Span (Years)'
 ])
 
-output_path = os.path.join(base_dir, 'All_Populations_Analysis.xlsx')
+# Construct the output path in the new output directory
+output_path = os.path.join(output_dir, 'All_Populations_Analysis.xlsx')
 os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
+# Write the Excel file
 df.to_excel(output_path, index=False)
 print(f"Data successfully written to {output_path}")
