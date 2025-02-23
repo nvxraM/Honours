@@ -8,9 +8,16 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from Bio import Entrez, SeqIO
 import shelve
 from tqdm import tqdm
-import ssl
 
+#Issue with certificate this fixed it
+import ssl
 ssl._create_default_https_context = ssl._create_stdlib_context
+
+# WARNING
+#  To Rerun this, you need to delete the Fasta Log File in the directory.
+# WARNING
+
+
 
 # Configure logging for detailed runtime information
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
