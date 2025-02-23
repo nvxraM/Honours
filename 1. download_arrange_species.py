@@ -8,6 +8,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from Bio import Entrez, SeqIO
 import shelve
 from tqdm import tqdm
+import ssl
+
+ssl._create_default_https_context = ssl._create_stdlib_context
 
 # Configure logging for detailed runtime information
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
