@@ -36,11 +36,15 @@ def check_cds_count(gb_file_path):
 
     Returns:
         int: The number of CDS_Genus entries found in the GenBank file.
+
+
+        #cds_count = len(re.findall(r'\n\s+CDS\s', content))
+        #cds_count = len(re.findall(r'\n\s+CDS_Genus\s', content)) << this one might not be working correctly
     """
     with open(gb_file_path, 'r') as file:
         content = file.read()
         # Matches lines indicating a CDS_Genus entry. CDS_Genus often start with a line containing "CDS_Genus" preceded by whitespace.
-        cds_count = len(re.findall(r'\n\s+CDS_Genus\s', content))
+        cds_count = len(re.findall(r'\n\s+CDS\s', content))
         return cds_count
 
 
