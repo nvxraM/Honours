@@ -118,7 +118,7 @@ def extract_and_save(records, gene_directory, protein_directory, fasta_records, 
         # Identify CDS_Genus features (features of type "CDS_Genus" with a "translation" qualifier)
         cds_features = [
             feature for feature in record.features
-            if feature.type == "CDS_Genus" and "translation" in feature.qualifiers
+            if feature.type == "CDS" and "translation" in feature.qualifiers
         ]
 
         # Process each CDS_Genus feature
