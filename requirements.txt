@@ -1,3 +1,4 @@
+#Will also need to Download MEGA11 command Line version (Not working with the newer version MEGA12)
 bcrypt==4.2.1
 biopython==1.85
 cffi==1.17.1
@@ -27,3 +28,4 @@ six==1.17.0
 tqdm==4.67.1
 tzdata==2025.1
 openpyxl==3.2.0b1
+pip==25.0.1

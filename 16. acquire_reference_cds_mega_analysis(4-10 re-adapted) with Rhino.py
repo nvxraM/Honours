@@ -1,33 +1,20 @@
 #!/usr/bin/env python3
 """
+CDS_Reference Pipeline (Unified Ingroup + Outgroup, ONLY NC_ references)
 
-#####################################################################
-*******************************WARNING*******************************
-I have added the Rhino in manually, as it was not included in the original script.
-sequences/gb/Hippopotamus_amphibius/Hippopotamus_amphibius.gb
-sequences/fasta/Hippopotamus_amphibius/Hippopotamus_amphibius.fasta
+This script processes *all* GenBank files from:
+  - sequences/gb/...
+  - sequences/outgroups/gb/...      <--- NOTE the "outgroups" folder name
+BUT it only extracts sequences where the record.id starts with "NC_".
 
-These will need to be added to complete the intended operation/analysis
-and then removed if trying to run the script as is previous to this,
-unless you intend to include the Rhino in the analysis.
+Any record that does not start with NC_ is skipped.
 
-#####################################################################
-
-
-CDS_Reference Pipeline + Post-Combination Processing
-
-Steps:
-  1) Parse GenBank files in 'gb' to extract CDS for NC_ references, embedding species in FASTA headers.
-  2) Upload & align protein sequences on a remote server (MUSCLE).
-  3) Add codon-based gaps to each gene’s nucleotide sequences.
-  4) Combine those gapped sequences into a single file,
-      'CDS_Reference_concatenated_gapped_sequences.fasta'
-  5) Finally, re-process that file: for every codon (3-nt chunk),
-     if there's ANY '-' or 'N' in that codon (across any record),
-     we remove that codon from **all** sequences.
-     This ensures no internal partial gaps remain in the final data.
-
-The final file after Step 5 has no codons containing '-' or 'N'.
+The pipeline:
+  1) Extracts CDS from these NC_ references -> local (CDS_nucleotide, CDS_protein)
+  2) Uploads & aligns protein sequences on remote server (MUSCLE)
+  3) Inserts codon-based gaps in the nucleotide sequences
+  4) Combines them into one big FASTA
+  5) Removes any codons that contain '-' or 'N' in any record
 """
 
 import os
@@ -40,13 +27,18 @@ from Bio import SeqIO
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
 
+# -----------------------------
+#  GLOBAL SETTINGS
+# -----------------------------
 
-# ------------------------------------------------------------------
-#  GLOBAL CONFIG
-# ------------------------------------------------------------------
+# Now referencing "outgroups" instead of "outgroup"
+GB_DIRECTORIES = [
+    os.path.join("sequences", "gb"),
+    os.path.join("sequences", "outgroups", "gb")
+]
 
-BASE_DIRECTORY = "sequences"                     # local base directory
-REMOTE_REF_DIR = "/home/mfreeman/USCServer/CDS_Reference/"  # remote directory on server
+BASE_DIRECTORY = "sequences"
+REMOTE_REF_DIR = "/home/mfreeman/USCServer/CDS_Reference/"
 LOCAL_REF_DIR  = os.path.join(BASE_DIRECTORY, "CDS_Reference")
 
 SSH_SERVER = "203.101.229.234"
@@ -54,7 +46,7 @@ SSH_PORT   = 22
 SSH_USER   = "mfreeman"
 SSH_KEY    = "C:/Users/freem/OneDrive/Documents/USC/Honours/API keys/mfreeman-private-key.txt"
 
-# Exclude ND6 from final concatenation?
+# Whether to exclude ND6 from the final combined alignment
 EXCLUDE_ND6 = True
 
 GENE_ORDER = [
@@ -63,22 +55,23 @@ GENE_ORDER = [
 ]
 
 
-# ------------------------------------------------------------------
-#  PART 1: EXTRACT REFERENCE CDS FROM GENBANK (WITH SPECIES NAME)
-# ------------------------------------------------------------------
+# -----------------------------
+#  UTILITY FUNCTIONS
+# -----------------------------
 
 def log_message(log_file_path, message):
     with open(log_file_path, 'a') as log_file:
         log_file.write(message + "\n")
 
+
 def remove_stop_codon(sequence, accession_id, log_file_path):
     """
     Removes full/partial stop codons at the end so the final length is multiple of 3.
-    Logs details.
+    Logs details to a file.
     """
     stop_codons = ["TAA", "TAG", "AGA", "AGG"]
 
-    # Check for full stop codon
+    # Check for a full (3-nt) stop codon
     if len(sequence) >= 3 and sequence[-3:] in stop_codons:
         log_message(log_file_path,
                     f"{accession_id} [{sequence[-3:]}] Full stop codon removed.")
@@ -99,6 +92,7 @@ def remove_stop_codon(sequence, accession_id, log_file_path):
         else:
             break
     return sequence
+
 
 def normalize_gene_name(gene_name):
     """
@@ -137,6 +131,7 @@ def normalize_gene_name(gene_name):
         return "CYTB"
     return g
 
+
 def normalize_combined_gene_name(gene_name):
     """
     Final standard mapping: COB->CYTB, etc.
@@ -158,100 +153,13 @@ def normalize_combined_gene_name(gene_name):
     }
     return mapping.get(gene_name, gene_name)
 
-def process_reference_genbank_files(base_directory):
-    """
-    1) Scan base_directory/gb for .gb files.
-    2) For each record with accession "NC_", extract CDS with translation.
-    3) Embed species name in FASTA header.
-    4) Write into:
-         base_directory/CDS_Reference/CDS_nucleotide/[GENE].fasta
-         base_directory/CDS_Reference/CDS_protein/[GENE].fasta
-    """
-    gb_directory = os.path.join(base_directory, "gb")
-    ref_directory = os.path.join(base_directory, "CDS_Reference")
-    nucleotide_dir = os.path.join(ref_directory, "CDS_nucleotide")
-    protein_dir = os.path.join(ref_directory, "CDS_protein")
-    log_file_path = os.path.join(ref_directory, "CDS_Reference_Log.txt")
-
-    os.makedirs(nucleotide_dir, exist_ok=True)
-    os.makedirs(protein_dir, exist_ok=True)
-
-    if not os.path.exists(gb_directory):
-        log_message(log_file_path, f"No directory {gb_directory} found.")
-        return
-
-    for root, dirs, files in os.walk(gb_directory):
-        for file in files:
-            if not file.endswith(".gb"):
-                continue
-            file_path = os.path.join(root, file)
-            with open(file_path, 'r') as gb_handle:
-                for record in SeqIO.parse(gb_handle, "gb"):
-                    accession_id = record.id.split()[0]
-                    if not accession_id.startswith("NC_"):
-                        continue
-
-                    organism = record.annotations.get('organism', 'Unknown').replace(' ', '_')
-
-                    cds_features = [
-                        f for f in record.features
-                        if f.type == "CDS" and "translation" in f.qualifiers
-                    ]
-                    for feature in cds_features:
-                        if "gene" in feature.qualifiers:
-                            raw_gene_name = feature.qualifiers["gene"][0]
-                        elif "product" in feature.qualifiers:
-                            raw_gene_name = feature.qualifiers["product"][0]
-                        else:
-                            continue
-
-                        gene_name = normalize_gene_name(raw_gene_name)
-                        gene_name = normalize_combined_gene_name(gene_name)
-
-                        if len(record.seq) == 0:
-                            log_message(log_file_path,
-                                        f"No seq data for {accession_id}, skipping.")
-                            continue
-
-                        # Nucleotide
-                        nuc_seq = str(feature.extract(record.seq))
-                        nuc_seq = remove_stop_codon(nuc_seq, accession_id, log_file_path)
-
-                        # Protein
-                        prot_seq = feature.qualifiers["translation"][0]
-
-                        # Insert species name
-                        header = f">{accession_id}_{organism}_{gene_name}"
-
-                        # Write to gene-level FASTA
-                        with open(os.path.join(nucleotide_dir, f"{gene_name}.fasta"), "a") as nf:
-                            nf.write(f"{header}\n{nuc_seq}\n")
-
-                        with open(os.path.join(protein_dir, f"{gene_name}.fasta"), "a") as pf:
-                            pf.write(f"{header}\n{prot_seq}\n")
-
-def step1_extract_references():
-    process_reference_genbank_files(BASE_DIRECTORY)
-    print("[Step 1] Reference CDS (with species name) extracted.")
-
-
-# ------------------------------------------------------------------
-#  PART 2: REMOTE MUSCLE ALIGNMENT
-# ------------------------------------------------------------------
-
-def run_command(command):
-    process = subprocess.Popen(
-        command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        shell=True, text=True
-    )
-    output, error = process.communicate()
-    return output, error, process.returncode
 
 def create_ssh_client(server, port, user, key_file):
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     client.connect(server, port, username=user, key_filename=key_file)
     return client
+
 
 def execute_command_via_ssh(client, command):
     stdin, stdout, stderr = client.exec_command(command)
@@ -260,27 +168,150 @@ def execute_command_via_ssh(client, command):
     error = stderr.read().decode()
     return output, error, exit_code
 
-def ensure_reference_directories_on_server(ssh_client, remote_base_directory):
+
+def run_command(command):
+    """
+    Simple local shell command runner.
+    """
+    process = subprocess.Popen(
+        command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        shell=True, text=True
+    )
+    output, error = process.communicate()
+    return output, error, process.returncode
+
+
+# ------------------------------------------------------------
+# STEP 1: EXTRACT ALL REFERENCE CDS (ONLY NC_)
+# ------------------------------------------------------------
+
+def process_all_genbank_files():
+    """
+    1) Walk both GB_DIRECTORIES for .gb files.
+    2) For each record, if record.id starts with NC_, then extract CDS.
+       Otherwise skip it (not a reference).
+    3) Write to sequences/CDS_Reference/CDS_nucleotide/ and /CDS_protein/
+    """
+    ref_dir = os.path.join(BASE_DIRECTORY, "CDS_Reference")
+    nuc_dir = os.path.join(ref_dir, "CDS_nucleotide")
+    prot_dir = os.path.join(ref_dir, "CDS_protein")
+    log_file = os.path.join(ref_dir, "CDS_Reference_Log.txt")
+
+    os.makedirs(nuc_dir, exist_ok=True)
+    os.makedirs(prot_dir, exist_ok=True)
+
+    for gb_dir in GB_DIRECTORIES:
+        if not os.path.exists(gb_dir):
+            continue  # skip missing directories
+
+        for root, dirs, files in os.walk(gb_dir):
+            for file in files:
+                if not file.endswith(".gb"):
+                    continue
+                file_path = os.path.join(root, file)
+                with open(file_path, 'r') as gb_handle:
+                    for record in SeqIO.parse(gb_handle, "gb"):
+                        accession_id = record.id.split()[0]
+                        # Only use references that start with NC_
+                        if not accession_id.startswith("NC_"):
+                            continue
+
+                        organism = record.annotations.get('organism', 'Unknown')
+                        organism = organism.replace(' ', '_')
+
+                        cds_features = [
+                            f for f in record.features
+                            if f.type == "CDS" and "translation" in f.qualifiers
+                        ]
+                        for feature in cds_features:
+                            if "gene" in feature.qualifiers:
+                                raw_gene_name = feature.qualifiers["gene"][0]
+                            elif "product" in feature.qualifiers:
+                                raw_gene_name = feature.qualifiers["product"][0]
+                            else:
+                                continue
+
+                            gene_name = normalize_gene_name(raw_gene_name)
+                            gene_name = normalize_combined_gene_name(gene_name)
+
+                            if len(record.seq) == 0:
+                                log_message(log_file, f"No seq data for {accession_id}, skipping.")
+                                continue
+
+                            # Extract nucleotide from feature
+                            nuc_seq = str(feature.extract(record.seq))
+                            nuc_seq = remove_stop_codon(nuc_seq, accession_id, log_file)
+
+                            # Protein
+                            prot_seq = feature.qualifiers["translation"][0]
+
+                            # Build header with species + gene
+                            header = f">{accession_id}_{organism}_{gene_name}"
+
+                            # Append to gene FASTA
+                            with open(os.path.join(nuc_dir, f"{gene_name}.fasta"), "a") as nf:
+                                nf.write(f"{header}\n{nuc_seq}\n")
+
+                            with open(os.path.join(prot_dir, f"{gene_name}.fasta"), "a") as pf:
+                                pf.write(f"{header}\n{prot_seq}\n")
+
+
+def step1_extract_references():
+    process_all_genbank_files()
+    print("[Step 1] Extracted CDS from NC_ references (both ingroup + outgroup).")
+
+
+# ------------------------------------------------------------
+# STEP 2: REMOTE MUSCLE ALIGNMENT
+# ------------------------------------------------------------
+
+def ensure_remote_directories(ssh_client, remote_base_directory):
     cmd = f"mkdir -p {remote_base_directory}CDS_protein/aligned"
     _, error, exit_code = execute_command_via_ssh(ssh_client, cmd)
     if exit_code != 0:
-        print(f"Error ensuring directories: {error}")
+        print(f"Error ensuring remote directories: {error}")
     else:
-        print("Remote reference directories ensured.")
+        print("[Remote] reference directories ensured.")
 
-def run_muscle_alignment(client, fasta_file):
+
+def upload_protein_fastas(ssh_client, local_ref_dir, remote_ref_dir):
+    """
+    Upload all protein .fasta from local to remote.
+    """
+    sftp = ssh_client.open_sftp()
+    try:
+        protein_dir = os.path.join(local_ref_dir, "CDS_protein")
+        if not os.path.exists(protein_dir):
+            print("[Upload] No local CDS_protein folder found.")
+            return
+
+        for file in os.listdir(protein_dir):
+            if file.endswith('.fasta'):
+                local_fp = os.path.join(protein_dir, file)
+                remote_fp = f"{remote_ref_dir}CDS_protein/{file}"
+                print(f"[Upload] {local_fp} -> {remote_fp}")
+                sftp.put(local_fp, remote_fp)
+    except Exception as e:
+        print(f"Error uploading: {str(e)}")
+    finally:
+        sftp.close()
+
+
+def run_muscle_alignment(ssh_client, fasta_file):
+    """
+    For a given .fasta on the remote server, produce an aligned .afa using MUSCLE.
+    """
     aligned_dir = os.path.join(os.path.dirname(fasta_file), "aligned")
     base_filename = os.path.basename(fasta_file)
     afa_filename = base_filename.replace('.fasta', '.afa')
     output_path = os.path.join(aligned_dir, afa_filename).replace("\\", "/")
 
-    # Skip if it already exists
-    out, err, status = execute_command_via_ssh(client, f"test -f {output_path} && echo exists")
+    # Skip if .afa already exists
+    out, err, status = execute_command_via_ssh(ssh_client, f"test -f {output_path} && echo exists")
     if out.strip() == "exists":
-        print(f"Skipping {fasta_file} (already aligned).")
+        print(f"[MUSCLE] Skipping {fasta_file}, already aligned.")
         return
 
-    # MUSCLE command (adapt if needed)
     muscle_cmd = (
         f"singularity exec /RDS/Q1233/singularity/muscle.sif "
         f"muscle -in {fasta_file} -out {output_path}"
@@ -289,57 +320,48 @@ def run_muscle_alignment(client, fasta_file):
     max_attempts = 3
     for attempt in range(1, max_attempts+1):
         print(f"[MUSCLE] Aligning {fasta_file} (Attempt {attempt}/{max_attempts})...")
-        out, err, status = execute_command_via_ssh(client, muscle_cmd)
+        out, err, status = execute_command_via_ssh(ssh_client, muscle_cmd)
         if status == 0:
-            print(f"Successfully aligned -> {output_path}")
+            print(f"[MUSCLE] Success -> {output_path}")
             return
         else:
             if "resource temporarily unavailable" in err.lower():
                 if attempt < max_attempts:
-                    print(f"Retrying {fasta_file} due to resource error...")
+                    print("[MUSCLE] Resource error, retrying...")
                     continue
                 else:
-                    print(f"Gave up after {max_attempts} attempts.")
+                    print("[MUSCLE] Gave up after 3 attempts.")
             else:
-                print(f"MUSCLE error: {err.strip()}")
+                print(f"[MUSCLE] Error: {err.strip()}")
             return
 
-def execute_muscle_on_reference(client, remote_ref_dir):
+
+def execute_muscle_on_remote(ssh_client, remote_ref_dir):
+    """
+    1) Find all .fasta in remote CDS_protein
+    2) Align each with MUSCLE in parallel
+    """
     find_cmd = f"find {remote_ref_dir}CDS_protein -type f -name '*.fasta'"
-    output, error, exit_code = execute_command_via_ssh(client, find_cmd)
+    output, error, exit_code = execute_command_via_ssh(ssh_client, find_cmd)
     if exit_code != 0:
-        print(f"Error finding .fasta: {error}")
+        print(f"[Remote] Error finding .fasta: {error}")
         return
 
-    files_list = [f.strip() for f in output.splitlines() if f.strip()]
+    files_list = [line.strip() for line in output.splitlines() if line.strip()]
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-        futures = [executor.submit(run_muscle_alignment, client, f) for f in files_list]
+        futures = []
+        for f in files_list:
+            futures.append(executor.submit(run_muscle_alignment, ssh_client, f))
         concurrent.futures.wait(futures)
 
-    print("[Step 2] All reference .fasta alignments completed.")
+    print("[Step 2] All protein FASTAs aligned on remote server.")
 
-def upload_reference_files(ssh_client, local_ref_dir, remote_ref_dir):
-    sftp = ssh_client.open_sftp()
-    try:
-        protein_dir = os.path.join(local_ref_dir, "CDS_protein")
-        if not os.path.exists(protein_dir):
-            print("No local CDS_protein folder to upload.")
-            return
 
-        for file in os.listdir(protein_dir):
-            if file.endswith('.fasta'):
-                local_fp = os.path.join(protein_dir, file)
-                remote_fp = f"{remote_ref_dir}CDS_protein/{file}"
-                print(f"Uploading {local_fp} -> {remote_fp}")
-                sftp.put(local_fp, remote_fp)
-
-    except Exception as e:
-        print(f"Error uploading: {str(e)}")
-    finally:
-        sftp.close()
-
-def download_reference_files(ssh_client, remote_ref_dir, local_ref_dir):
+def download_aligned_fastas(ssh_client, remote_ref_dir, local_ref_dir):
+    """
+    Download the .afa alignments back to local.
+    """
     sftp = ssh_client.open_sftp()
     try:
         local_aligned_dir = os.path.join(local_ref_dir, "CDS_protein", "aligned")
@@ -350,10 +372,10 @@ def download_reference_files(ssh_client, remote_ref_dir, local_ref_dir):
             files = sftp.listdir(remote_aligned_dir)
             afa_files = [f for f in files if f.endswith('.afa')]
             if not afa_files:
-                print("No .afa files to download.")
+                print("[Download] No .afa files to download.")
                 return
         except IOError as e:
-            print(f"Failed listing remote aligned dir: {str(e)}")
+            print(f"[Download] Failed listing remote aligned dir: {str(e)}")
             return
 
         for file in afa_files:
@@ -362,50 +384,51 @@ def download_reference_files(ssh_client, remote_ref_dir, local_ref_dir):
             tmp_fp = os.path.join(local_aligned_dir, "temp_" + file)
 
             if os.path.exists(local_fp):
-                print(f"{file} already exists locally; skipping.")
+                print(f"[Download] {file} already exists locally; skipping.")
                 continue
 
-            print(f"Downloading {remote_fp} -> {local_fp}")
+            print(f"[Download] {remote_fp} -> {local_fp}")
             try:
                 sftp.get(remote_fp, tmp_fp)
                 if os.path.getsize(tmp_fp) > 0:
                     shutil.move(tmp_fp, local_fp)
                 else:
-                    print("Downloaded file is empty, removing.")
+                    print("[Download] File is empty, removing.")
                     os.remove(tmp_fp)
             except Exception as e:
-                print(f"Error downloading {file}: {str(e)}")
+                print(f"[Download] Error downloading {file}: {str(e)}")
                 if os.path.exists(tmp_fp):
                     os.remove(tmp_fp)
 
     finally:
         sftp.close()
 
+
 def step2_remote_alignment():
     client = create_ssh_client(SSH_SERVER, SSH_PORT, SSH_USER, SSH_KEY)
-    ensure_reference_directories_on_server(client, REMOTE_REF_DIR)
-    upload_reference_files(client, LOCAL_REF_DIR, REMOTE_REF_DIR)
-    execute_muscle_on_reference(client, REMOTE_REF_DIR)
-    download_reference_files(client, REMOTE_REF_DIR, LOCAL_REF_DIR)
+    ensure_remote_directories(client, REMOTE_REF_DIR)
+    upload_protein_fastas(client, LOCAL_REF_DIR, REMOTE_REF_DIR)
+    execute_muscle_on_remote(client, REMOTE_REF_DIR)
+    download_aligned_fastas(client, REMOTE_REF_DIR, LOCAL_REF_DIR)
     client.close()
-    print("[Step 2] Remote alignment & download complete.")
+    print("[Step 2] Remote MUSCLE alignment + download complete.")
 
 
-# ------------------------------------------------------------------
-#  PART 3: ADDING CODON-BASED GAPS
-# ------------------------------------------------------------------
+# ------------------------------------------------------------
+# STEP 3: ADD CODON-BASED GAPS TO NUCLEOTIDES
+# ------------------------------------------------------------
 
-def add_codon_gaps_to_references(base_dir):
+def add_codon_gaps_to_nucleotides(base_dir):
     """
-    For each .afa in CDS_protein/aligned, find the matching .fasta in CDS_nucleotide,
-    insert '---' for each gap in the protein alignment, then write to CDS_nucleotide_gapped.
+    For each .afa in CDS_protein/aligned, find matching .fasta in CDS_nucleotide,
+    insert '---' for each gap in the protein alignment, and write to CDS_nucleotide_gapped.
     """
     aligned_dir = os.path.join(base_dir, "CDS_protein", "aligned")
     nuc_dir     = os.path.join(base_dir, "CDS_nucleotide")
     gapped_dir  = os.path.join(base_dir, "CDS_nucleotide_gapped")
 
     if not os.path.exists(aligned_dir):
-        print("No aligned dir found.")
+        print("[Step 3] No aligned directory found. Skipping codon-gap step.")
         return
 
     os.makedirs(gapped_dir, exist_ok=True)
@@ -414,37 +437,37 @@ def add_codon_gaps_to_references(base_dir):
         if not filename.endswith(".afa"):
             continue
 
-        gene_name = os.path.splitext(filename)[0]  # e.g. ND1
+        gene_name = os.path.splitext(filename)[0]
         protein_path = os.path.join(aligned_dir, filename)
         nucleotide_path = os.path.join(nuc_dir, f"{gene_name}.fasta")
 
         if not os.path.exists(nucleotide_path):
-            print(f"No matching nucleotide file for {gene_name}")
+            print(f"[Step 3] No matching nucleotide file for {gene_name}, skipping.")
             continue
 
         prot_recs = list(SeqIO.parse(protein_path, "fasta"))
         nuc_recs  = list(SeqIO.parse(nucleotide_path, "fasta"))
 
-        # ID-based matching
+        # Build dict for quick ID lookup
         nuc_dict = {r.id: r for r in nuc_recs}
         mod_recs = []
 
         for prot_rec in prot_recs:
-            nuc_rec = nuc_dict.get(prot_rec.id)
-            if not nuc_rec:
-                print(f"No matching nt record for {prot_rec.id}")
+            if prot_rec.id not in nuc_dict:
+                print(f"[Step 3] No matching NT record for {prot_rec.id}, skipping.")
                 continue
 
-            gene_seq = str(nuc_rec.seq)
+            nuc_rec = nuc_dict[prot_rec.id]
+            nt_seq_str = str(nuc_rec.seq)
             new_seq = []
             idx = 0
 
             for aa in prot_rec.seq:
                 if aa == '-':
-                    # Insert codon gap
+                    # Insert a 3-nt gap
                     new_seq.append('---')
                 else:
-                    codon = gene_seq[idx:idx+3]
+                    codon = nt_seq_str[idx: idx+3]
                     new_seq.append(codon)
                     idx += 3
 
@@ -457,174 +480,173 @@ def add_codon_gaps_to_references(base_dir):
             mod_recs.append(new_rec)
 
         outpath = os.path.join(gapped_dir, f"{gene_name}.fasta")
-        SeqIO.write(mod_recs, outpath, 'fasta')
-        print(f"Gapped {gene_name} -> {outpath}")
+        SeqIO.write(mod_recs, outpath, "fasta")
+        print(f"[Step 3] Gapped {gene_name} -> {outpath}")
+
 
 def step3_add_codon_gaps():
-    add_codon_gaps_to_references(LOCAL_REF_DIR)
-    print("[Step 3] Codon-based gaps applied to reference nucleotides.")
+    add_codon_gaps_to_nucleotides(LOCAL_REF_DIR)
+    print("[Step 3] Codon-based gaps applied to nucleotides.")
 
 
-# ------------------------------------------------------------------
-#  PART 4: COMBINE GAPPED SEQUENCES INTO ONE FILE
-# ------------------------------------------------------------------
+# ------------------------------------------------------------
+# STEP 4: COMBINE GAPPED SEQUENCES INTO A SINGLE FILE
+# ------------------------------------------------------------
 
 def get_filtered_gene_order():
+    """
+    Return GENE_ORDER with ND6 optionally excluded.
+    """
     if EXCLUDE_ND6:
         return [g for g in GENE_ORDER if g != "ND6"]
     else:
         return GENE_ORDER
 
+
 def step4_combine():
     """
-    1. For each gene in get_filtered_gene_order, read the gapped FASTA in
-       CDS_nucleotide_gapped,
-    2. Remove any trailing _GENE from the record ID,
-    3. Concatenate everything for each unique accession,
-    4. Write single combined file: 'CDS_Reference_concatenated_gapped_sequences.fasta'
+    Read each gene's gapped FASTA (CDS_nucleotide_gapped/[GENE].fasta),
+    concatenate all genes for each sample, produce one big FASTA:
+    CDS_Reference_concatenated_gapped_sequences.fasta
     """
-    gapped_dir   = os.path.join(LOCAL_REF_DIR, "CDS_nucleotide_gapped")
-    output_file  = os.path.join(gapped_dir, "CDS_Reference_concatenated_gapped_sequences.fasta")
+    gapped_dir  = os.path.join(LOCAL_REF_DIR, "CDS_nucleotide_gapped")
+    output_file = os.path.join(gapped_dir, "CDS_Reference_concatenated_gapped_sequences.fasta")
 
     genes = get_filtered_gene_order()
-    combined_dict = {}  # {accession_without_gene: concatenated_seq}
+    combined_dict = {}  # { sample_id: combined_seq }
 
     for gene in genes:
-        gene_file = os.path.join(gapped_dir, f"{gene}.fasta")
-        if not os.path.exists(gene_file):
-            print(f"Warning: {gene_file} not found; skipping.")
+        gene_fasta = os.path.join(gapped_dir, f"{gene}.fasta")
+        if not os.path.exists(gene_fasta):
+            print(f"[Step 4] Missing gapped file for {gene}, skipping.")
             continue
 
-        with open(gene_file, "r") as f:
-            for record in SeqIO.parse(f, "fasta"):
-                accession = record.id
-                # Strip _GENE from the end if present
-                for gnm in GENE_ORDER:
-                    suff = f"_{gnm}"
-                    if accession.endswith(suff):
-                        accession = accession[: -len(suff)]
-                        break
+        for record in SeqIO.parse(gene_fasta, "fasta"):
+            sample_id = record.id
+            # Also strip out trailing _GENE if present
+            for gnm in GENE_ORDER:
+                suffix = f"_{gnm}"
+                if sample_id.endswith(suffix):
+                    sample_id = sample_id[:-len(suffix)]
+                    break
 
-                if accession not in combined_dict:
-                    combined_dict[accession] = ""
-                combined_dict[accession] += str(record.seq)
+            seq_str = str(record.seq)
+            if sample_id not in combined_dict:
+                combined_dict[sample_id] = ""
+            combined_dict[sample_id] += seq_str
 
-    # Write the combined file (unprocessed)
     with open(output_file, "w") as out:
-        for acc, seq in combined_dict.items():
-            out.write(f">{acc}\n{seq}\n")
+        for sample_id, seq in combined_dict.items():
+            out.write(f">{sample_id}\n{seq}\n")
 
-    print("[Step 4] Created combined file ->", output_file)
+    print("[Step 4] Combined all gapped genes into:", output_file)
 
 
-# ------------------------------------------------------------------
-#  PART 5: REMOVE ANY CODONS WITH '-' OR 'N'
-# ------------------------------------------------------------------
+# ------------------------------------------------------------
+# STEP 5: REMOVE ANY CODONS WITH '-' OR 'N'
+# ------------------------------------------------------------
 
 def step5_remove_codons_with_gaps_or_N():
     """
-    Reads the newly combined file
-      'CDS_Reference_concatenated_gapped_sequences.fasta'
-    and removes any codon (3-nt chunk) that has at least one '-' or 'N'.
-    Then rewrites the same file with the final cleaned sequences.
+    We open the single combined FASTA, and for each codon (3-nt chunk):
+     - If ANY sample has a '-' or 'N' in that codon, remove that codon from ALL samples.
     """
-    gapped_dir  = os.path.join(LOCAL_REF_DIR, "CDS_nucleotide_gapped")
-    combined_fp = os.path.join(gapped_dir, "CDS_Reference_concatenated_gapped_sequences.fasta")
+    gapped_dir   = os.path.join(LOCAL_REF_DIR, "CDS_nucleotide_gapped")
+    combined_fp  = os.path.join(gapped_dir, "CDS_Reference_concatenated_gapped_sequences.fasta")
 
     if not os.path.exists(combined_fp):
-        print(f"No combined file found at {combined_fp}")
+        print("[Step 5] No combined file found, skipping.")
         return
 
-    # Read all sequences into a dict
     seq_dict = {}
     for record in SeqIO.parse(combined_fp, "fasta"):
         seq_dict[record.id] = str(record.seq)
 
     if not seq_dict:
-        print("No sequences found in combined file. Nothing to process.")
+        print("[Step 5] Combined file is empty. Nothing to clean.")
         return
 
-    # 1. Determine the shortest length among all sequences
+    # 1. Find the minimum sequence length
     min_len = min(len(s) for s in seq_dict.values())
-    # 2. Trim all sequences to that length
-    for acc in seq_dict:
-        seq_dict[acc] = seq_dict[acc][:min_len]
 
-    # 3. Ensure multiple of 3 (trim off extras if needed)
+    # 2. Truncate all sequences to min_len
+    for k in seq_dict:
+        seq_dict[k] = seq_dict[k][:min_len]
+
+    # 3. Make sure length is multiple of 3
     remainder = min_len % 3
     if remainder != 0:
         min_len -= remainder
-        for acc in seq_dict:
-            seq_dict[acc] = seq_dict[acc][:min_len]
+        for k in seq_dict:
+            seq_dict[k] = seq_dict[k][:min_len]
 
     if min_len == 0:
-        # If we lost everything, just overwrite with empty
+        # everything is length zero
         with open(combined_fp, "w") as out:
-            for acc in seq_dict:
-                out.write(f">{acc}\n\n")
-        print("[Step 5] All sequences ended up 0-length. File overwritten with empties.")
+            for k in seq_dict:
+                out.write(f">{k}\n\n")
+        print("[Step 5] All sequences reduced to length 0.")
         return
 
-    # 4. Now remove any codon that contains '-' or 'N'
     num_codons = min_len // 3
+    # 4. Build a mask to indicate which codons are "clean" (no '-' or 'N' in any sample)
     codon_mask = [True] * num_codons
 
-    # Build a mask across all sequences
     for i in range(num_codons):
         start = i * 3
         end   = start + 3
-        # If ANY sequence has '-' or 'N' in that codon, mask = False
         for seq in seq_dict.values():
             codon = seq[start:end]
             if '-' in codon or 'N' in codon:
                 codon_mask[i] = False
                 break
 
-    # 5. Rebuild sequences, skipping masked codons
-    for acc, fullseq in seq_dict.items():
-        parts = []
+    # 5. Rebuild each sequence with only the codons that pass
+    for k, fullseq in seq_dict.items():
+        new_codons = []
         for i in range(num_codons):
             if codon_mask[i]:
-                start = i*3
-                end   = start+3
-                parts.append(fullseq[start:end])
-        seq_dict[acc] = "".join(parts)
+                start = i * 3
+                end   = start + 3
+                new_codons.append(fullseq[start:end])
+        seq_dict[k] = "".join(new_codons)
 
-    # 6. Optionally, ensure final length is consistent
-    final_min_len = min(len(s) for s in seq_dict.values()) if seq_dict else 0
-    for acc in seq_dict:
-        seq_dict[acc] = seq_dict[acc][:final_min_len]
+    # 6. Optionally ensure final min length is consistent
+    final_len = min(len(s) for s in seq_dict.values()) if seq_dict else 0
+    for k in seq_dict:
+        seq_dict[k] = seq_dict[k][:final_len]
 
-    # Overwrite the combined file with final cleaned sequences
+    # Overwrite the combined file
     with open(combined_fp, "w") as out:
-        for acc, sequence in seq_dict.items():
-            out.write(f">{acc}\n{sequence}\n")
+        for k, s in seq_dict.items():
+            out.write(f">{k}\n{s}\n")
 
-    print("[Step 5] Removed any codons containing '-' or 'N'. Final file overwritten:")
+    print("[Step 5] Removed codons with '-' or 'N'. Final alignment saved to:")
+    print(" ", combined_fp)
 
-    # Show final stats
-    for acc in seq_dict:
-        print(f" {acc} => length {len(seq_dict[acc])}")
+    # Quick stats
+    for k in seq_dict:
+        print(f"  {k} => length {len(seq_dict[k])}")
 
 
-# ------------------------------------------------------------------
-#  MAIN
-# ------------------------------------------------------------------
+# ------------------------------------------------------------
+# MAIN
+# ------------------------------------------------------------
 
 def main():
-    # Step 1: Extract from GenBank
+    # Step 1: Extract from .gb files (ONLY if accession_id.startswith("NC_"))
     step1_extract_references()
 
-    # Step 2: Remote MUSCLE alignment
+    # Step 2: Align protein sequences on remote server
     step2_remote_alignment()
 
-    # Step 3: Add codon-based gaps
+    # Step 3: Insert codon-based gaps into nucleotide sequences
     step3_add_codon_gaps()
 
-    # Step 4: Combine all genes into one file
+    # Step 4: Combine all gapped sequences into one multi-gene FASTA
     step4_combine()
 
-    # Step 5: Remove any codons containing '-' or 'N'
+    # Step 5: Remove codons that contain '-' or 'N' in any sample
     step5_remove_codons_with_gaps_or_N()
 
 if __name__ == "__main__":
