@@ -29,7 +29,7 @@ from Bio.SeqRecord import SeqRecord
 
 # -----------------------------
 #  GLOBAL SETTINGS
-# -----------------------------
+# -----------------------------                   
 
 # Now referencing "outgroups" instead of "outgroup"
 GB_DIRECTORIES = [
