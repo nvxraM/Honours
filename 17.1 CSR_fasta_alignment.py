@@ -120,27 +120,36 @@ def download_alignments(ssh_client):
     sftp = ssh_client.open_sftp()
     try:
         for genus_dir in LOCAL_BASE.iterdir():
-            if not genus_dir.is_dir(): continue
+            if not genus_dir.is_dir():
+                continue
 
-            local_aligned  = genus_dir / "aligned"
+            # make sure local aligned/ exists
+            local_aligned = genus_dir / "aligned"
             local_aligned.mkdir(exist_ok=True)
 
-            remote_aligned = f"{REMOTE_BASE}/{genus_dir.name}/aligned"
-            try:
-                for fname in sftp.listdir(remote_aligned):
-                    if not fname.endswith('.afa'):
-                        continue
-                    remote_file = f"{remote_aligned}/{fname}"
-                    local_file  = local_aligned / fname
+            # two places to check on the server
+            remote_base_genus = f"{REMOTE_BASE}/{genus_dir.name}"
+            remote_aligned     = remote_base_genus + "/aligned"
+            remote_roots       = [remote_aligned, remote_base_genus]
 
-                    if local_file.exists():
-                        print(f"[SKIP] {fname} exists locally.")
-                    else:
-                        print(f"[DL] {remote_file} → {local_file}")
-                        sftp.get(remote_file, str(local_file))
+            for remote_dir in remote_roots:
+                try:
+                    for fname in sftp.listdir(remote_dir):
+                        if not fname.endswith(".afa"):
+                            continue
+                        remote_file = f"{remote_dir}/{fname}"
+                        local_file  = local_aligned / fname
 
-            except IOError:
-                print(f"[WARN] No remote aligned folder for {genus_dir.name}")
+                        if local_file.exists():
+                            print(f"[SKIP] {genus_dir.name}/{fname} already downloaded.")
+                        else:
+                            print(f"[DL] {remote_file} → {local_file}")
+                            sftp.get(remote_file, str(local_file))
+                except IOError:
+                    # only warn about missing aligned/ subfolder
+                    if remote_dir == remote_aligned:
+                        print(f"[WARN] No remote aligned folder for {genus_dir.name}")
+                    # if remote_base_genus is missing (unlikely), just skip
 
     finally:
         sftp.close()
@@ -149,8 +158,8 @@ def download_alignments(ssh_client):
 
 if __name__ == "__main__":
     client = create_ssh_client(SERVER, PORT, USER, KEY_FILE)
-    #ensure_remote_dirs(client)
-    #upload_csr(client)
-    #align_all(client)
+    ensure_remote_dirs(client)
+    upload_csr(client)
+    align_all(client)
     download_alignments(client)
     client.close()
