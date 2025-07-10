@@ -10,9 +10,9 @@ score_csr_full_report_with_reference.py
          – Analyzed codon count
          – Positions of synonymous mutations (1-based codon index[SAMPLE_CODON])
          – Positions of nonsynonymous mutations (1-based codon index[SAMPLE_CODON])
-2) Per species: record the reference ID, average all sample synonymous-counts,
+2) Per species: record the reference ID, sum all sample synonymous-counts,
    nonsynonymous-counts, and analyzed-codon-counts for the summary report.
-3) Grand (weighted) average across all individuals of all species for these S/NS metrics
+3) Grand sum across all individuals of all species for these S/NS metrics
    for the summary report.
 4) Output:
    - CSR_species_summary.xlsx   (one row per species + an “All_species” row)
@@ -46,7 +46,6 @@ NONSYN_SPECIFIC_CODONS = frozenset([
     "CTA", "CTG", "CGA", "CGG", "TTA", "TTG"
 ])
 
-
 # ─── HELPERS ───────────────────────────────────────────────────────────────
 
 def sanitize_sheet_name(name: str) -> str:
@@ -66,8 +65,8 @@ def calculate_syn_nonsyn_counts(ref_seq_str: str, samp_seq_str: str):
     syn_count = 0
     nonsyn_count = 0
     analyzed_codons_count = 0
-    syn_positions_codons = []  # Will store (position, sample_codon)
-    nonsyn_positions_codons = []  # Will store (position, sample_codon)
+    syn_positions_codons = []
+    nonsyn_positions_codons = []
 
     ref_s = ref_seq_str.upper()
     samp_s = samp_seq_str.upper()
@@ -79,50 +78,33 @@ def calculate_syn_nonsyn_counts(ref_seq_str: str, samp_seq_str: str):
         ref_c = ref_s[idx: idx + 3]
         samp_c = samp_s[idx: idx + 3]
 
-        is_codon_valid_for_sns = True
-        if len(ref_c) < 3 or len(samp_c) < 3:
-            is_codon_valid_for_sns = False
-        else:
-            for k_base in range(3):
-                if ref_c[k_base] in '-N' or samp_c[k_base] in '-N':
-                    is_codon_valid_for_sns = False
-                    break
-
-        if not is_codon_valid_for_sns:
+        # Validate codon (no gaps or Ns)
+        valid = len(ref_c) == 3 and len(samp_c) == 3 and all(b not in '-N' for b in ref_c + samp_c)
+        if not valid:
             continue
 
         analyzed_codons_count += 1
-        codon_pos_1_based = i_codon + 1
+        pos = i_codon + 1
 
         if ref_c == samp_c:
             continue
 
-        mutation_counted_this_codon = False
-
-        if ref_c in SYN_TARGET_CODONS:
-            if ref_c[:2] == samp_c[:2] and ref_c[2] != samp_c[2]:
-                syn_count += 1
-                syn_positions_codons.append((codon_pos_1_based, samp_c))  # Store pos and sample codon
-                mutation_counted_this_codon = True
-
-        if mutation_counted_this_codon:
+        # Synonymous
+        if ref_c in SYN_TARGET_CODONS and ref_c[:2] == samp_c[:2] and ref_c[2] != samp_c[2]:
+            syn_count += 1
+            syn_positions_codons.append((pos, samp_c))
             continue
 
-        if ref_c in NONSYN_SPECIFIC_CODONS:
-            if ref_c[0] == samp_c[0] and ref_c[2] == samp_c[2] and ref_c[1] != samp_c[1]:
-                nonsyn_count += 1
-                nonsyn_positions_codons.append((codon_pos_1_based, samp_c))  # Store pos and sample codon
-                mutation_counted_this_codon = True
-
-        if mutation_counted_this_codon:
+        # Nonsynonymous specific
+        if ref_c in NONSYN_SPECIFIC_CODONS and ref_c[0] == samp_c[0] and ref_c[2] == samp_c[2] and ref_c[1] != samp_c[1]:
+            nonsyn_count += 1
+            nonsyn_positions_codons.append((pos, samp_c))
             continue
 
-        condition_not_both_special = not (ref_c in NONSYN_SPECIFIC_CODONS and samp_c in NONSYN_SPECIFIC_CODONS)
-
-        if condition_not_both_special:
-            if ref_c[1] != samp_c[1] or ref_c[2] != samp_c[2]:
-                nonsyn_count += 1
-                nonsyn_positions_codons.append((codon_pos_1_based, samp_c))  # Store pos and sample codon
+        # General nonsynonymous
+        if ref_c[1] != samp_c[1] or ref_c[2] != samp_c[2]:
+            nonsyn_count += 1
+            nonsyn_positions_codons.append((pos, samp_c))
 
     return syn_count, nonsyn_count, analyzed_codons_count, syn_positions_codons, nonsyn_positions_codons
 
@@ -139,127 +121,100 @@ def process_alignment(afa_path: Path, summary_rows: list):
     ref_id = ref_rec.id
     ref_seq = str(ref_rec.seq)
 
-    raw_syn_counts_summary = []
-    raw_nonsyn_counts_summary = []
-    raw_analyzed_codons_summary = []
-    current_species_detail_rows = []
+    raw_syn = []
+    raw_nonsyn = []
+    raw_codon_counts = []
+    detail_rows = []
 
-    _, _, ref_analyzed_codons, _, _ = calculate_syn_nonsyn_counts(ref_seq, ref_seq)
-    current_species_detail_rows.append({
+    # Reference row
+    _, _, ref_codons, _, _ = calculate_syn_nonsyn_counts(ref_seq, ref_seq)
+    detail_rows.append({
         "Role": "Reference", "Sequence_ID": ref_id,
         "Synonymous_Count": 0, "Nonsynonymous_Count": 0,
-        "Analyzed_Codons": ref_analyzed_codons,
+        "Analyzed_Codons": ref_codons,
         "Synonymous_Mutation_Positions": "", "Nonsynonymous_Mutation_Positions": ""
     })
 
+    # Sample rows
     for rec in records[1:]:
-        samp_seq_str = str(rec.seq)
-        # syn_p_codons and nonsyn_p_codons will be lists of (pos, codon_str) tuples
-        syn_c, nonsyn_c, analyzed_c, syn_p_codons, nonsyn_p_codons = calculate_syn_nonsyn_counts(ref_seq, samp_seq_str)
+        syn, nonsyn, codons, syn_pos, nonsyn_pos = calculate_syn_nonsyn_counts(ref_seq, str(rec.seq))
+        raw_syn.append(syn)
+        raw_nonsyn.append(nonsyn)
+        raw_codon_counts.append(codons)
 
-        raw_syn_counts_summary.append(syn_c)
-        raw_nonsyn_counts_summary.append(nonsyn_c)
-        raw_analyzed_codons_summary.append(analyzed_c)
-
-        # Format position strings with codons
-        syn_pos_str = ",".join([f"{pos}[{codon}]" for pos, codon in syn_p_codons])
-        nonsyn_pos_str = ",".join([f"{pos}[{codon}]" for pos, codon in nonsyn_p_codons])
-
-        current_species_detail_rows.append({
+        detail_rows.append({
             "Role": "Sample", "Sequence_ID": rec.id,
-            "Synonymous_Count": syn_c, "Nonsynonymous_Count": nonsyn_c,
-            "Analyzed_Codons": analyzed_c,
-            "Synonymous_Mutation_Positions": syn_pos_str,
-            "Nonsynonymous_Mutation_Positions": nonsyn_pos_str
+            "Synonymous_Count": syn, "Nonsynonymous_Count": nonsyn,
+            "Analyzed_Codons": codons,
+            "Synonymous_Mutation_Positions": ",".join(f"{p}[{c}]" for p, c in syn_pos),
+            "Nonsynonymous_Mutation_Positions": ",".join(f"{p}[{c}]" for p, c in nonsyn_pos)
         })
 
-    n_samples = len(raw_syn_counts_summary)
+    n_samples = len(raw_syn)
     if n_samples > 0:
-        avg_syn_count = sum(raw_syn_counts_summary) / n_samples
-        avg_nonsyn_count = sum(raw_nonsyn_counts_summary) / n_samples
-        avg_analyzed_codons = sum(raw_analyzed_codons_summary) / n_samples
+        sum_syn = sum(raw_syn)
+        sum_nonsyn = sum(raw_nonsyn)
+        sum_codons = sum(raw_codon_counts)
         summary_rows.append({
             "Genus": genus, "Species": species, "Reference_ID": ref_id,
             "Num_Samples": n_samples,
-            "Avg_Syn_Count": round(avg_syn_count, 2),
-            "Avg_Nonsyn_Count": round(avg_nonsyn_count, 2),
-            "Avg_Analyzed_Codons": round(avg_analyzed_codons, 2),
+            "Sum_Syn_Count": sum_syn,
+            "Sum_Nonsyn_Count": sum_nonsyn,
+            "Sum_Analyzed_Codons": sum_codons
         })
 
-    species_detail_df = None
-    if current_species_detail_rows:
-        df = pd.DataFrame(current_species_detail_rows)
-        detail_cols_order = [
-            "Role", "Sequence_ID",
-            "Synonymous_Count", "Nonsynonymous_Count", "Analyzed_Codons",
-            "Synonymous_Mutation_Positions", "Nonsynonymous_Mutation_Positions"
-        ]
-        existing_cols = [col for col in detail_cols_order if col in df.columns]
-        species_detail_df = df[existing_cols]
-    return species, species_detail_df
+    detail_df = pd.DataFrame(detail_rows)
+    cols = ["Role", "Sequence_ID", "Synonymous_Count", "Nonsynonymous_Count", "Analyzed_Codons",
+            "Synonymous_Mutation_Positions", "Nonsynonymous_Mutation_Positions"]
+    return species, detail_df[cols]
 
-
-# ─── MAIN ─────────────────────────────────────────────────────────────────
 
 def main():
-    summary_rows = []
-    all_species_detail_data = {}
-
+    summary = []
+    details = {}
     LOCAL_BASE.mkdir(parents=True, exist_ok=True)
 
     for genus_dir in LOCAL_BASE.iterdir():
         if not genus_dir.is_dir(): continue
-        aligned_dir = genus_dir / "aligned"
-        if not aligned_dir.is_dir(): continue
-        for afa_path in aligned_dir.glob("*.afa"):
-            print(f"Processing {afa_path}...")
-            species_name, species_df = process_alignment(afa_path, summary_rows)
-            if species_name and species_df is not None and not species_df.empty:
-                if species_name in all_species_detail_data:
-                    print(
-                        f"Warning: Overwriting detail data for species {species_name}. Multiple .afa files might map to it.",
-                        file=sys.stderr)
-                all_species_detail_data[species_name] = species_df
+        aligned = genus_dir / "aligned"
+        if not aligned.is_dir(): continue
+        for afa in aligned.glob("*.afa"):
+            print(f"Processing {afa}...")
+            name, df = process_alignment(afa, summary)
+            if name and df is not None:
+                details[name] = df
 
-    if not summary_rows:
-        print("No summary data generated from .afa files.", file=sys.stderr)
-    else:
-        df_sum = pd.DataFrame(summary_rows)
+    # Write summary
+    if summary:
+        df_sum = pd.DataFrame(summary)
         df_sum.sort_values(["Genus", "Species"], inplace=True)
         total_samples = df_sum["Num_Samples"].sum()
-        if total_samples > 0:
-            weighted_avg_syn = (df_sum["Avg_Syn_Count"] * df_sum["Num_Samples"]).sum() / total_samples
-            weighted_avg_nonsyn = (df_sum["Avg_Nonsyn_Count"] * df_sum["Num_Samples"]).sum() / total_samples
-            weighted_avg_analyzed_codons = (df_sum["Avg_Analyzed_Codons"] * df_sum["Num_Samples"]).sum() / total_samples
-        else:
-            weighted_avg_syn, weighted_avg_nonsyn, weighted_avg_analyzed_codons = 0, 0, 0
-        all_species_summary_row = {
+        total_syn = df_sum["Sum_Syn_Count"].sum()
+        total_nonsyn = df_sum["Sum_Nonsyn_Count"].sum()
+        total_codons = df_sum["Sum_Analyzed_Codons"].sum()
+        all_row = {
             "Genus": "All", "Species": "All_species", "Reference_ID": "",
             "Num_Samples": total_samples,
-            "Avg_Syn_Count": round(weighted_avg_syn, 2),
-            "Avg_Nonsyn_Count": round(weighted_avg_nonsyn, 2),
-            "Avg_Analyzed_Codons": round(weighted_avg_analyzed_codons, 2),
+            "Sum_Syn_Count": total_syn,
+            "Sum_Nonsyn_Count": total_nonsyn,
+            "Sum_Analyzed_Codons": total_codons
         }
-        df_sum = pd.concat([df_sum, pd.DataFrame([all_species_summary_row])], ignore_index=True)
-        summary_cols_order = [
-            "Genus", "Species", "Reference_ID", "Num_Samples",
-            "Avg_Syn_Count", "Avg_Nonsyn_Count", "Avg_Analyzed_Codons"
-        ]
-        df_sum = df_sum.reindex(columns=summary_cols_order)
-        df_sum.to_excel(SUMMARY_XLSX, index=False)
+        df_sum = pd.concat([df_sum, pd.DataFrame([all_row])], ignore_index=True)
+        cols = ["Genus", "Species", "Reference_ID", "Num_Samples",
+                "Sum_Syn_Count", "Sum_Nonsyn_Count", "Sum_Analyzed_Codons"]
+        df_sum[cols].to_excel(SUMMARY_XLSX, index=False)
         print(f"✔ Wrote summary to {SUMMARY_XLSX}")
-
-    if not all_species_detail_data:
-        print("No detail data generated for any species to write to Excel.", file=sys.stderr)
     else:
-        with pd.ExcelWriter(ALL_DETAILS_XLSX, engine='openpyxl') as writer:
-            sorted_species_names = sorted(all_species_detail_data.keys())
-            for species_name in sorted_species_names:
-                df_detail_species = all_species_detail_data[species_name]
-                safe_sheet_name = sanitize_sheet_name(species_name)
-                df_detail_species.to_excel(writer, sheet_name=safe_sheet_name, index=False)
-        print(f"✔ Wrote all species details to {ALL_DETAILS_XLSX}")
+        print("No summary data generated.", file=sys.stderr)
 
+    # Write details
+    if details:
+        with pd.ExcelWriter(ALL_DETAILS_XLSX, engine='openpyxl') as writer:
+            for sp in sorted(details):
+                details[sp].to_excel(writer, sheet_name=sanitize_sheet_name(sp), index=False)
+        print(f"✔ Wrote details to {ALL_DETAILS_XLSX}")
+    else:
+        print("No detail data generated.", file=sys.stderr)
 
 if __name__ == "__main__":
     main()
