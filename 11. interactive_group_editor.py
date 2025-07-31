@@ -18,6 +18,7 @@ import shutil
 from tkinter import messagebox
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
+import time
 
 #
 #
@@ -154,7 +155,7 @@ class InteractiveGroupEditor:
 
                     if not os.path.exists(csv_path):
                         try:
-                            df_mds = pd.read_csv(mds_path, delim_whitespace=True)
+                            df_mds = pd.read_csv(mds_path, sep=r'\s+')
                             if not {'FID', 'IID', 'C1', 'C2'}.issubset(df_mds.columns):
                                 logging.error(f"MDS file {mds_path} missing required columns.")
                                 continue
@@ -183,6 +184,8 @@ class InteractiveGroupEditor:
         for col in required_columns:
             if col not in self.df.columns:
                 self.df[col] = 'N/A'
+            # Ensure column is object dtype for safe string assignment
+            self.df[col] = self.df[col].astype(object)
 
     def _load_data(self):
         self.x = self.df['C1'].values
@@ -598,6 +601,7 @@ class InteractiveGroupEditor:
             logging.error(f"Error parsing lat_lon string: {lat_lon_str}")
             return None
 
+
     def _get_location_name(self, lat_lon):
         if lat_lon in self.geolocator_cache:
             return self.geolocator_cache[lat_lon]
@@ -607,7 +611,9 @@ class InteractiveGroupEditor:
             self.geolocator_cache[lat_lon] = "N/A"
             return "N/A"
         try:
-            location = self.geolocator.reverse(lat_lon_tuple, language='en')
+            # Insert rate limiting here
+            time.sleep(1)  # <-- Respect OSM usage policy!
+            location = self.geolocator.reverse(lat_lon_tuple, language='en', timeout=10)
             if location:
                 self.geolocator_cache[lat_lon] = location.address
                 return location.address
