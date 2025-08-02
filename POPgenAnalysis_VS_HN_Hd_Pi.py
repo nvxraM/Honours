@@ -6,48 +6,63 @@ import numpy as np
 import csv
 from tqdm import tqdm
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from math import sqrt
 
-# ---- Haplotype Diversity (Hd) ----
-# Hd = (n/(n-1)) * (1 - sum(pi^2))
-# n = number of individuals in the population
-# pi = frequency of each haplotype (proportion of individuals with that haplotype)
-# This is Nei's gene diversity: the probability that two randomly chosen haplotypes are different.
+# ----- Haplotype Diversity (Hd) -----
+# Hd (Nei's 1987 gene diversity) is the probability that two randomly selected haplotypes are different.
+# It measures the uniqueness of haplotypes in your sample, i.e., the genetic diversity at the haplotype level.
+# Formula: Hd = (n/(n-1)) * (1 - sum(pi^2))
+#    - n: number of individuals/sequences
+#    - pi: frequency (proportion) of each haplotype
 def haplotype_diversity(hap_counts):
     n = sum(hap_counts)
     if n <= 1:
         return 0.0
-    freq = np.array(hap_counts) / n
+    freq = np.array(hap_counts) / n  # Calculate frequencies of each haplotype
     Hd = (n / (n-1)) * (1 - np.sum(freq ** 2))
     return Hd
 
-# ---- Nucleotide Diversity (Pi) ----
-# Pi = average number of nucleotide differences per site between any two DNA sequences in the sample
-# For each pair of sequences:
-#   - Count the number of nucleotide differences
-#   - Normalize by the number of sites compared (ignoring ambiguous/gap sites)
-#   - Average over all possible pairs
+# ----- Standard Deviation of Haplotype Diversity (Hd) -----
+# This describes how much Hd would vary between different samples of the same size from this population.
+# Formula (common approximation, matches DnaSP): Var(Hd) = Hd*(1-Hd)/(n-1)
+# SD(Hd) = sqrt(Var(Hd))
+def hd_std(hd, n):
+    if n <= 1:
+        return 0.0
+    var = (hd * (1 - hd)) / (n - 1)
+    return sqrt(var) if var >= 0 else 0.0
+
+# ----- Nucleotide Diversity (Pi) -----
+# Pi (Nei & Li, 1979) measures the average proportion of nucleotide differences per site between all possible pairs of sequences.
+# 1. For each pair of sequences, count the number of differences and divide by the number of valid (A/T/G/C) sites.
+# 2. Average across all pairs.
 def nucleotide_diversity(seqs):
     n = len(seqs)
     if n <= 1:
-        return 0.0
-    L = len(seqs[0])
-    total_pi = 0
-    count = 0
+        return 0.0, []
+    pairwise_pis = []
     for i in range(n):
         for j in range(i+1, n):
-            # Only count positions where both bases are A/T/G/C (ignore gaps/ambiguous)
+            # Only compare positions where both have a clear base (A/T/G/C)
             diffs = sum(a != b for a, b in zip(seqs[i], seqs[j]) if a in "ATGC" and b in "ATGC")
             length = sum((a in "ATGC" and b in "ATGC") for a, b in zip(seqs[i], seqs[j]))
             if length > 0:
-                total_pi += diffs / length
-                count += 1
-    if count == 0:
-        return 0.0
-    # Average over all pairs
-    return total_pi / count
+                pairwise_pis.append(diffs / length)
+    if not pairwise_pis:
+        return 0.0, []
+    pi = np.mean(pairwise_pis)
+    return pi, pairwise_pis
 
-# ---- Number of Variable (Segregating) Sites (VS) ----
-# This is simply the count of alignment columns (positions) where there is more than one unique nucleotide (A/T/G/C)
+# ----- Standard Deviation of Nucleotide Diversity (Pi) -----
+# This quantifies the variability in Pi among all possible pairs of sequences.
+# It's simply the standard deviation of the list of all pairwise Pi values.
+def pi_std(pairwise_pis):
+    if len(pairwise_pis) < 2:
+        return 0.0
+    return float(np.std(pairwise_pis, ddof=1))
+
+# ----- Number of Variable Sites (VS) -----
+# The number of alignment columns (sites) with more than one type of nucleotide (A/T/G/C) in your sample.
 def variable_sites(seqs):
     nsites = 0
     alignment = np.array([list(s) for s in seqs])
@@ -57,7 +72,8 @@ def variable_sites(seqs):
             nsites += 1
     return nsites
 
-# ---- Main per-file processing ----
+# ----- Per-file Processing -----
+# Reads a .nex file, assigns sequences to populations, and computes all stats for each population.
 def process_nexus(nexus_path):
     try:
         aln = AlignIO.read(nexus_path, "nexus")
@@ -75,40 +91,47 @@ def process_nexus(nexus_path):
     for pop, seqs in pops.items():
         n = len(seqs)
         vs = variable_sites(seqs)
-        # ---- Haplotype Number (HN) ----
-        # HN is the number of unique haplotypes (unique sequences) in the population
+        # ----- Haplotype Number (HN) -----
+        # The count of unique haplotype sequences in the population.
         haps = Counter(seqs)
         hn = len(haps)
         hd = haplotype_diversity(list(haps.values()))
-        pi = nucleotide_diversity(seqs)
+        hd_sd = hd_std(hd, n)
+        pi, pairwise_pis = nucleotide_diversity(seqs)
+        pi_sd = pi_std(pairwise_pis)
         pop_results.append({
             "Species": species,
             "Population": pop,
-            "N": n,  # Number of individuals/sequences
-            "Variable_Sites": vs,  # VS: Number of segregating sites
-            "Haplotype_Number": hn,  # HN: Number of unique haplotypes
-            "Haplotype_Diversity": f"{hd:.8f}",  # Hd: Probability two sequences have different haplotypes
-            "Nucleotide_Diversity": f"{pi:.8f}"  # Pi: Mean proportion of differences per site
+            "N": n,  # Number of sequences in this population
+            "Variable_Sites": vs,  # Number of variable (segregating) sites
+            "Haplotype_Number": hn,  # Number of unique haplotypes (HN)
+            "Haplotype_Diversity": f"{hd:.8f}",  # Hd (probability two are different)
+            "Hd_StdDev": f"{hd_sd:.8f}",        # Standard deviation of Hd
+            "Nucleotide_Diversity": f"{pi:.8f}",  # Pi (average pairwise difference)
+            "Pi_StdDev": f"{pi_sd:.8f}"           # Standard deviation of Pi
         })
     return pop_results
 
 def main():
+    # Directory containing your .nex files
     folder = Path("sequences/Species_POP_Nexus")
     all_results = []
     nexus_files = list(folder.glob("*.nex"))
     print(f"Processing {len(nexus_files)} .nex files (multi-threaded)...")
-    max_threads = 25  # ~80% of your 32 logical threads
+    max_threads = 25  # Use 80% of 32 logical cores
+    # Run processing in parallel threads for speed
     with ThreadPoolExecutor(max_workers=max_threads) as executor:
         future_to_file = {executor.submit(process_nexus, f): f for f in nexus_files}
         for future in tqdm(as_completed(future_to_file), total=len(nexus_files), desc="Analyzing species", unit="species"):
             res = future.result()
             all_results.extend(res)
-    # Write to CSV
-    out_csv = folder / "population_statistics.csv"
+    # Write results to CSV file
+    out_csv = folder / "zpopulation_statistics.csv"
     with open(out_csv, "w", newline='') as f:
         writer = csv.DictWriter(f, fieldnames=[
             "Species", "Population", "N", "Variable_Sites",
-            "Haplotype_Number", "Haplotype_Diversity", "Nucleotide_Diversity"
+            "Haplotype_Number", "Haplotype_Diversity", "Hd_StdDev",
+            "Nucleotide_Diversity", "Pi_StdDev"
         ])
         writer.writeheader()
         for row in all_results:
