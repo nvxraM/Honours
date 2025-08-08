@@ -18,6 +18,32 @@ def convert_pop_format(pop, species):
     else:
         return f"{species}_{pop}"
 
+def get_population_folder(pop_name):
+    # e.g., Balaena_mysticetus_Population_one --> Gp1
+    #       Balaena_mysticetus_Population_two --> Gp2, etc.
+    if pop_name.endswith("_Population_one"):
+        return "Gp1"
+    elif pop_name.endswith("_Population_two"):
+        return "Gp2"
+    elif pop_name.endswith("_Population_three"):
+        return "Gp3"
+    elif pop_name.endswith("_Population_four"):
+        return "Gp4"
+    elif pop_name.endswith("_Population_five"):
+        return "Gp5"
+    elif pop_name.endswith("_Population_six"):
+        return "Gp6"
+    elif pop_name.endswith("_Population_seven"):
+        return "Gp7"
+    elif pop_name.endswith("_Population_eight"):
+        return "Gp8"
+    elif pop_name.endswith("_Population_nine"):
+        return "Gp9"
+    elif pop_name.endswith("_Population_ten"):
+        return "Gp10"
+    else:
+        return pop_name.replace(" ", "_")
+
 def read_grp(grp_path, species):
     mapping = {}
     with open(grp_path) as f:
@@ -46,7 +72,7 @@ def read_fasta(fasta_path):
         seqs.append((name, replace_ambiguous_bases(seq)))
     return seqs
 
-def write_nexus_with_traits(out_path, seqs, mapping, species_name):
+def write_nexus(out_path, seqs, pop_name):
     ntax = len(seqs)
     nchar = len(seqs[0][1]) if seqs else 0
     with open(out_path, 'w') as f:
@@ -58,18 +84,9 @@ def write_nexus_with_traits(out_path, seqs, mapping, species_name):
         for name, seq in seqs:
             f.write(f"{name.replace(' ', '_'):30s} {seq}\n")
         f.write("    ;\nEnd;\n\n")
-        # Add population trait block
-        f.write("Begin traits;\n")
-        f.write("    Dimensions NTraits=1;\n")
-        f.write("    Format labels=yes missing=? separator=Comma;\n")
-        f.write("    TraitLabels population;\n")
-        f.write("    Matrix\n")
-        for name, _ in seqs:
-            pop = mapping.get(name, "?")
-            f.write(f"    {name.replace(' ', '_'):30s} {pop}\n")
-        f.write("    ;\nEnd;\n")
+        f.write(f"[Population: {pop_name}]\n")
 
-def process_all_species_haploid(base_path, output_base):
+def process_populations_to_nexus(base_path, output_base):
     base = Path(base_path)
     output_base = Path(output_base)
     for genus_folder in base.iterdir():
@@ -86,12 +103,25 @@ def process_all_species_haploid(base_path, output_base):
                 continue
             mapping = read_grp(grp_path, species_name)
             seqs = read_fasta(fasta_path)
+
+            # Group sequences by population
+            pop_to_seqs = {}
+            for name, seq in seqs:
+                pop = mapping.get(name)
+                if not pop:
+                    continue
+                pop_to_seqs.setdefault(pop, []).append((name, seq))
+
             species_out = output_base / species_folder.name
-            species_out.mkdir(parents=True, exist_ok=True)
-            # Write NEXUS file with traits block for populations
-            nexus_out = species_out / f"{species_folder.name}.nexus"
-            write_nexus_with_traits(nexus_out, seqs, mapping, species_name)
-    print("Wrote NEXUS files with population info for all species.")
+            for pop, pop_seqs in pop_to_seqs.items():
+                pop_folder = get_population_folder(pop)
+                full_out_folder = species_out / pop_folder
+                full_out_folder.mkdir(parents=True, exist_ok=True)
+                # File name: Species_PopulationName.nexus
+                safe_pop = pop.replace(" ", "_")
+                nexus_out = full_out_folder / f"{species_name}_{safe_pop}.nexus"
+                write_nexus(nexus_out, pop_seqs, pop)
+    print("Wrote NEXUS files for each population in all species.")
 
 # -------- CONFIGURE THESE PATHS --------
 input_base = "sequences/Interactive_group_editor"
@@ -99,4 +129,4 @@ output_base = "sequences/Species_POP_Nexus"
 
 if __name__ == "__main__":
     Path(output_base).mkdir(parents=True, exist_ok=True)
-    process_all_species_haploid(input_base, output_base)
+    process_populations_to_nexus(input_base, output_base)
