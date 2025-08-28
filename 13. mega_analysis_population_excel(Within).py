@@ -4,6 +4,13 @@ import pandas as pd
 from Bio import SeqIO
 from Bio.SeqUtils import gc_fraction
 
+############### WARNING ###############
+#
+# There is a bug where the Sequence No. is off by -1 everytime..... double check numbers!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+#
+############### WARNING ###############
+
+
 # Input data directory
 base_dir = 'sequences/Interactive_group_editor'
 
